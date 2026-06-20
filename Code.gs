@@ -1,22 +1,45 @@
-/******************************************************
- * APPS SCRIPT - NOVEDADES EQUIPAMIENTO
- * Hoja requerida: PIZARRA
- * Encabezados esperados:
- * ID | FECHA_ALTA | ORIGEN | UBICACION | ELEMENTO | TAREA | PRIORIDAD |
- * TIEMPO_ESTIMADO_DIAS | FECHA_VENCIMIENTO | ESTADO | ASIGNADO_A |
- * FECHA_ASIGNACION | FECHA_FINALIZACION | OBSERVACIONES | FOTOS |
- * CREADO_POR | ULTIMA_ACTUALIZACION | ULTIMO_ASIGNADO
- ******************************************************/
+/*************** CONFIGURACION SBVP ***************/
+const SPREADSHEET_ID = '1iej80w--kZK_N33UTq9FbDbA0air3qFimrDIB1QAxZ0';
+const ROOT_FOLDER_ID = '12CkVpy0YE0Jais2ffn1ewbKAvLR0USsQ';
+const NOVEDADES_EMAIL = 'adm.equipamiento.sbvp@gmail.com';
+const INSTITUTION = 'Sociedad Bomberos Voluntarios Pergamino';
+const RESPONSABLES_SPREADSHEET_ID = '1nTBEnVuyXHPMJsMrnfdfcbKUFIFLKED3Z4oalQYRH14';
 
-const SPREADSHEET_ID = 'PEGAR_ID_DE_TU_GOOGLE_SHEET';
-const SHEET_NAME = 'PIZARRA';
-const ADMIN_PASS = 'CAMBIAR_CLAVE_ADMIN';
+/*************** CONFIGURACION PIZARRA ***************/
+const PIZARRA_SHEET_NAME = 'PIZARRA';
+const INTERNAL_SHEETS = ['AGENDA', 'REGISTROS', 'NOVEDADES', 'PIZARRA', 'PIZZARRA'];
+const ADMIN_PASS = '1105';
 const FINALIZADAS_VISIBLES_DIAS = 7;
+const DIAS_PARA_LIBERAR_ASIGNADA = 5;
+const PIZARRA_HEADERS = [
+  'ID',
+  'FECHA_ALTA',
+  'ORIGEN',
+  'UBICACION',
+  'ELEMENTO',
+  'TAREA',
+  'PRIORIDAD',
+  'TIEMPO_ESTIMADO_DIAS',
+  'FECHA_VENCIMIENTO',
+  'ESTADO',
+  'ASIGNADO_A',
+  'FECHA_ASIGNACION',
+  'FECHA_FINALIZACION',
+  'OBSERVACIONES',
+  'FOTOS',
+  'CREADO_POR',
+  'ULTIMA_ACTUALIZACION',
+  'ULTIMO_ASIGNADO'
+];
 
+/*************** WEB APP UNIFICADA ***************/
 function doGet(e) {
   try {
-    const action = (e.parameter.action || 'list').trim();
     const params = e.parameter || {};
+    const action = String(params.action || '').trim();
+
+    if (action === 'config') return jsonResponse(getConfig_());
+    if (action === 'activity') return jsonResponse({ items: getActivityItems_(params.name) });
 
     if (action === 'list') return jsonResponse(listTasks_());
     if (action === 'assign') return jsonResponse(assignTask_(params));
@@ -24,9 +47,20 @@ function doGet(e) {
     if (action === 'adminUpdate') return jsonResponse(adminUpdate_(params));
     if (action === 'createFromNovedad') return jsonResponse(createTaskFromNovedad_(params));
 
-    return jsonResponse({ ok: false, message: 'Acción no reconocida: ' + action });
+    return jsonResponse({ ok: true, message: 'Control de equipamiento y pizarra activos' });
   } catch (err) {
-    return jsonResponse({ ok: false, message: err.message });
+    return jsonResponse({ ok: false, message: err.message, error: err.message });
+  }
+}
+
+function doPost(e) {
+  try {
+    const body = JSON.parse(e.postData.contents || '{}');
+    if (body.action !== 'submit') throw new Error('Accion no valida');
+    const result = saveSubmission_(body.payload);
+    return jsonResponse({ ok: true, ...result });
+  } catch (err) {
+    return jsonResponse({ ok: false, message: err.message, error: err.message });
   }
 }
 
@@ -36,17 +70,222 @@ function jsonResponse(obj) {
     .setMimeType(ContentService.MimeType.JSON);
 }
 
-function getSheet_() {
+/*************** LECTURA DE MATRIZ ***************/
+function getConfig_() {
   const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
-  const sh = ss.getSheetByName(SHEET_NAME);
-  if (!sh) throw new Error('No existe la hoja ' + SHEET_NAME);
+  const agendaSheet = ss.getSheetByName('AGENDA');
+  if (!agendaSheet) throw new Error('No existe la hoja AGENDA');
+
+  const values = agendaSheet.getDataRange().getDisplayValues().filter(r => r.some(c => c !== ''));
+  const agenda = {};
+  values.slice(1).forEach(row => {
+    const day = normalizeDay_(row[0]);
+    if (!day) return;
+    agenda[day] = row.slice(1).map(v => String(v).trim()).filter(Boolean);
+  });
+
+  const activities = ss.getSheets()
+    .map(s => s.getName())
+    .filter(name => !isInternalSheet_(name));
+
+  return { agenda, activities, responsables: getResponsables_(), completedToday: getCompletedToday_() };
+}
+
+function getResponsables_() {
+  const ss = SpreadsheetApp.openById(RESPONSABLES_SPREADSHEET_ID);
+  const sheet = ss.getSheets()[0];
+  const lastRow = sheet.getLastRow();
+  if (lastRow < 2) return [];
+  return sheet.getRange(2, 4, lastRow - 1, 1)
+    .getDisplayValues()
+    .flat()
+    .map(v => String(v).trim())
+    .filter(Boolean)
+    .filter((value, index, arr) => arr.indexOf(value) === index);
+}
+
+function getCompletedToday_() {
+  const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+  const sh = ss.getSheetByName('REGISTROS');
+  if (!sh || sh.getLastRow() < 2) return [];
+
+  const values = sh.getDataRange().getValues();
+  const headers = values[0].map(h => String(h).trim());
+  const activityIdx = headers.indexOf('Actividad');
+  const controlDateIdx = headers.indexOf('Fecha control');
+  const loadDateIdx = headers.indexOf('Fecha carga');
+
+  if (activityIdx < 0) return [];
+
+  const tz = Session.getScriptTimeZone();
+  const todayKey = Utilities.formatDate(new Date(), tz, 'yyyy-MM-dd');
+  const completed = new Set();
+
+  values.slice(1).forEach(row => {
+    const activity = String(row[activityIdx] || '').trim();
+    if (!activity) return;
+
+    let key = '';
+    if (controlDateIdx >= 0 && row[controlDateIdx]) {
+      key = normalizeDateKey_(row[controlDateIdx]);
+    } else if (loadDateIdx >= 0 && row[loadDateIdx]) {
+      key = normalizeDateKey_(row[loadDateIdx]);
+    }
+
+    if (key === todayKey) completed.add(activity);
+  });
+
+  return Array.from(completed);
+}
+
+function getActivityItems_(sheetName) {
+  const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+  const sheet = ss.getSheetByName(sheetName);
+  if (!sheet) throw new Error('No existe la hoja de actividad: ' + sheetName);
+
+  const values = sheet.getDataRange().getDisplayValues().filter(r => r.some(c => c !== ''));
+  if (values.length < 2) return [];
+
+  const headers = values[0].map(h => normalizeHeader_(h));
+  const idx = {
+    movil: headers.indexOf('movil'),
+    ordenUbicacion: headers.indexOf('orden de ubicacion'),
+    ubicacion: headers.indexOf('ubicacion'),
+    elemento: headers.indexOf('elemento'),
+    cantidad: headers.indexOf('cantidad')
+  };
+  Object.entries(idx).forEach(([k, v]) => {
+    if (v < 0) throw new Error('Falta columna requerida en ' + sheetName + ': ' + k);
+  });
+
+  return values.slice(1).map(r => ({
+    movil: r[idx.movil],
+    ordenUbicacion: Number(r[idx.ordenUbicacion]) || 9999,
+    ubicacion: r[idx.ubicacion],
+    elemento: r[idx.elemento],
+    cantidadEsperada: r[idx.cantidad]
+  })).filter(x => x.elemento).sort((a, b) => {
+    return a.ordenUbicacion - b.ordenUbicacion || String(a.ubicacion).localeCompare(String(b.ubicacion));
+  });
+}
+
+/*************** GUARDADO CONTROL, PDF Y NOVEDADES ***************/
+function saveSubmission_(payload) {
+  if (!payload || !payload.activity) throw new Error('Falta actividad');
+  const now = new Date();
+  const folder = getOrCreateFolder_(DriveApp.getFolderById(ROOT_FOLDER_ID), payload.activity);
+  const pdfBlob = buildPdf_(payload, now);
+  const filename = `Control_${payload.activity}_${Utilities.formatDate(now, Session.getScriptTimeZone(), 'yyyy-MM-dd_HH-mm')}.pdf`;
+  const file = folder.createFile(pdfBlob.setName(filename));
+
+  appendRegistro_(payload, now, file.getUrl());
+  appendNovedades_(payload, now, file.getUrl());
+
+  return { pdfUrl: file.getUrl(), filename };
+}
+
+function buildPdf_(payload, now) {
+  const novedades = getNovedadesFromPayload_(payload);
+  const rowsHtml = (payload.responses || []).map(r => {
+    const isBad = r.condicionEstado === 'Mal';
+    const isWarn = r.cantidadEstado !== 'Correcto' || r.condicionEstado === 'Regular';
+    const cls = isBad ? 'bad' : (isWarn ? 'warn' : '');
+    return `<tr class="${cls}"><td>${esc(r.ubicacion)}</td><td>${esc(r.elemento)}</td><td>${esc(r.cantidadEsperada)}</td><td>${esc(r.cantidadEstado)}</td><td>${esc(r.condicionEstado)}</td></tr>`;
+  }).join('');
+
+  const html = `
+  <html><head><style>
+    body{font-family:Arial,sans-serif;color:#17212b} h1{color:#063452;margin:0} h2{color:#063452;margin-bottom:4px}.top{border-bottom:4px solid #df3438;padding-bottom:10px;margin-bottom:12px}.meta{font-size:12px;margin-bottom:14px}table{width:100%;border-collapse:collapse;font-size:11px}th,td{border:1px solid #b8c5d0;padding:6px;vertical-align:top}th{background:#063452;color:white}.warn{background:#fff2a8}.bad{background:#ffd6d6}.obs{border:1px solid #b8c5d0;padding:8px;margin-top:12px;min-height:45px}.nov{margin-top:12px;background:#fff7d4;padding:8px;border:1px solid #e4cf62}
+  </style></head><body>
+    <div class="top"><h1>Control de equipamiento</h1><strong>${INSTITUTION}</strong></div>
+    <div class="meta">
+      <div><b>Actividad:</b> ${esc(payload.activity)}</div>
+      <div><b>Fecha:</b> ${esc(formatControlDate_(payload.fechaControl))}</div>
+      <div><b>Responsable/s:</b> ${esc(payload.responsable || '-')}</div>
+      <div><b>Generado:</b> ${Utilities.formatDate(now, Session.getScriptTimeZone(), 'dd/MM/yyyy HH:mm')}</div>
+    </div>
+    <table><thead><tr><th>Ubicacion</th><th>Elemento</th><th>Unidades</th><th>Cantidad</th><th>Condicion</th></tr></thead><tbody>${rowsHtml}</tbody></table>
+    <h2>Observaciones generales</h2><div class="obs">${esc(payload.observaciones || '-')}</div>
+    <div class="nov"><b>Novedades detectadas:</b> ${novedades.length}</div>
+  </body></html>`;
+
+  return HtmlService.createHtmlOutput(html).getBlob().getAs(MimeType.PDF);
+}
+
+function appendRegistro_(payload, now, pdfUrl) {
+  const sh = getOrCreateSheet_('REGISTROS', ['Fecha carga','Fecha control','Actividad','Responsable/s','Observaciones','PDF','Total items','Total novedades']);
+  sh.appendRow([now, payload.fechaControl || '', payload.activity, payload.responsable || '', payload.observaciones || '', pdfUrl, (payload.responses || []).length, getNovedadesFromPayload_(payload).length]);
+}
+
+function appendNovedades_(payload, now, pdfUrl) {
+  const novedades = getNovedadesFromPayload_(payload);
+  if (!novedades.length && !payload.observaciones) return;
+
+  const sh = getOrCreateSheet_('NOVEDADES', ['Fecha carga','Enviado','Fecha control','Actividad','Responsable/s','Ubicacion','Elemento','Unidad esperada','Cantidad','Condicion','Observacion general','PDF']);
+
+  novedades.forEach(n => {
+    sh.appendRow([now, '', payload.fechaControl || '', payload.activity, payload.responsable || '', n.ubicacion, n.elemento, n.cantidadEsperada, n.cantidadEstado, n.condicionEstado, payload.observaciones || '', pdfUrl]);
+    createPizarraTask_({
+      origen: 'Control de equipamiento',
+      ubicacion: n.ubicacion || payload.activity || '',
+      elemento: n.elemento || '',
+      tarea: buildTaskText_(n),
+      prioridad: inferPriority_(n),
+      observaciones: payload.observaciones || '',
+      fotos: pdfUrl,
+      creadoPor: payload.responsable || ''
+    });
+  });
+
+  if (!novedades.length && payload.observaciones) {
+    sh.appendRow([now, '', payload.fechaControl || '', payload.activity, payload.responsable || '', '-', '-', '-', '-', '-', payload.observaciones, pdfUrl]);
+    createPizarraTask_({
+      origen: 'Observacion de control',
+      ubicacion: payload.activity || '',
+      elemento: 'Observacion general',
+      tarea: payload.observaciones,
+      prioridad: 'Media',
+      observaciones: 'Generada desde observaciones generales del control.',
+      fotos: pdfUrl,
+      creadoPor: payload.responsable || ''
+    });
+  }
+}
+
+function getNovedadesFromPayload_(payload) {
+  return (payload.responses || []).filter(r => r.cantidadEstado !== 'Correcto' || r.condicionEstado !== 'Bueno');
+}
+
+function buildTaskText_(n) {
+  const parts = [];
+  if (n.cantidadEstado && n.cantidadEstado !== 'Correcto') parts.push('Cantidad: ' + n.cantidadEstado);
+  if (n.condicionEstado && n.condicionEstado !== 'Bueno') parts.push('Condicion: ' + n.condicionEstado);
+  return parts.length ? parts.join(' / ') : 'Revisar novedad reportada';
+}
+
+function inferPriority_(n) {
+  if (String(n.condicionEstado || '').trim() === 'Mal') return 'Alta';
+  if (String(n.condicionEstado || '').trim() === 'Regular') return 'Media';
+  if (String(n.cantidadEstado || '').trim() !== 'Correcto') return 'Media';
+  return 'Baja';
+}
+
+/*************** PIZARRA ***************/
+function getPizarraSheet_() {
+  const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+  let sh = ss.getSheetByName(PIZARRA_SHEET_NAME);
+  if (!sh) {
+    sh = ss.insertSheet(PIZARRA_SHEET_NAME);
+    sh.appendRow(PIZARRA_HEADERS);
+  }
+  if (sh.getLastRow() === 0) sh.appendRow(PIZARRA_HEADERS);
   return sh;
 }
 
-function getData_() {
-  const sh = getSheet_();
+function getPizarraData_() {
+  const sh = getPizarraSheet_();
   const values = sh.getDataRange().getValues();
-  if (values.length < 1) throw new Error('La hoja no tiene encabezados.');
+  if (values.length < 1) throw new Error('La hoja PIZARRA no tiene encabezados.');
   const headers = values[0].map(String);
   const rows = values.slice(1);
   const items = rows.map((row, idx) => {
@@ -57,10 +296,209 @@ function getData_() {
   return { sh, headers, items };
 }
 
+function listTasks_() {
+  const releasedExpired = releaseExpired_();
+  const { items } = getPizarraData_();
+
+  const visible = items.filter(item => {
+    const estado = String(item.ESTADO || '').trim();
+    if (estado === 'Finalizada') {
+      return daysSince_(item.FECHA_FINALIZACION) <= FINALIZADAS_VISIBLES_DIAS;
+    }
+    return true;
+  }).map(item => normalizeForClient_(item));
+
+  return { ok: true, tasks: visible, releasedExpired };
+}
+
+function normalizeForClient_(item) {
+  const copy = {};
+  Object.keys(item).forEach(k => {
+    if (k === '_row') return;
+    let v = item[k];
+    if (Object.prototype.toString.call(v) === '[object Date]') {
+      v = String(k).includes('FECHA') ? onlyDate_(v) : formatDate_(v);
+    }
+    copy[k] = v === null || v === undefined ? '' : String(v);
+  });
+  copy.VENCIDA = shouldReleaseAssigned_(item);
+  return copy;
+}
+
+function shouldReleaseAssigned_(item) {
+  if (String(item.ESTADO).trim() !== 'Asignada') return false;
+  return daysSince_(item.FECHA_ASIGNACION) >= DIAS_PARA_LIBERAR_ASIGNADA;
+}
+
+function releaseExpired_() {
+  const { sh, headers, items } = getPizarraData_();
+  const cEstado = colIndex_(headers, 'ESTADO');
+  const cAsignado = colIndex_(headers, 'ASIGNADO_A');
+  const cUltimo = colIndex_(headers, 'ULTIMO_ASIGNADO');
+  const cObs = colIndex_(headers, 'OBSERVACIONES');
+  const cUpd = colIndex_(headers, 'ULTIMA_ACTUALIZACION');
+  const cFechaAsignacion = colIndex_(headers, 'FECHA_ASIGNACION');
+
+  let count = 0;
+  items.forEach(item => {
+    if (shouldReleaseAssigned_(item)) {
+      const anterior = item.ASIGNADO_A || '';
+      const obsActual = item.OBSERVACIONES || '';
+      const obsNueva = String(obsActual) + (obsActual ? '\n' : '') + 'Tarea sin finalizar por ' + DIAS_PARA_LIBERAR_ASIGNADA + ' dias desde la asignacion. Liberada automaticamente el ' + formatDate_(now_()) + '.';
+      sh.getRange(item._row, cEstado).setValue('Disponible');
+      sh.getRange(item._row, cUltimo).setValue(anterior);
+      sh.getRange(item._row, cAsignado).setValue('');
+      sh.getRange(item._row, cFechaAsignacion).setValue('');
+      sh.getRange(item._row, cObs).setValue(obsNueva);
+      sh.getRange(item._row, cUpd).setValue(formatDate_(now_()));
+      count++;
+    }
+  });
+  return count;
+}
+
+function findPizarraById_(id) {
+  const data = getPizarraData_();
+  const item = data.items.find(x => String(x.ID) === String(id));
+  if (!item) throw new Error('No se encontro la tarea ID ' + id);
+  return { ...data, item };
+}
+
+function assignTask_(params) {
+  const user = String(params.user || '').trim();
+  if (!user) throw new Error('Falta el nombre de quien toma la tarea.');
+  const { sh, headers, item } = findPizarraById_(params.id);
+  if (String(item.ESTADO).trim() !== 'Disponible') {
+    throw new Error('La tarea no esta disponible.');
+  }
+  sh.getRange(item._row, colIndex_(headers, 'ESTADO')).setValue('Asignada');
+  sh.getRange(item._row, colIndex_(headers, 'ASIGNADO_A')).setValue(user);
+  sh.getRange(item._row, colIndex_(headers, 'FECHA_ASIGNACION')).setValue(formatDate_(now_()));
+  sh.getRange(item._row, colIndex_(headers, 'ULTIMA_ACTUALIZACION')).setValue(formatDate_(now_()));
+  return { ok: true, message: 'Tarea asignada.' };
+}
+
+function finishTask_(params) {
+  const { sh, headers, item } = findPizarraById_(params.id);
+  const obsCierre = String(params.observaciones || '').trim();
+  const obsActual = item.OBSERVACIONES || '';
+  const obsNueva = obsCierre ? String(obsActual) + (obsActual ? '\n' : '') + 'Cierre: ' + obsCierre : obsActual;
+
+  sh.getRange(item._row, colIndex_(headers, 'ESTADO')).setValue('Finalizada');
+  sh.getRange(item._row, colIndex_(headers, 'FECHA_FINALIZACION')).setValue(formatDate_(now_()));
+  sh.getRange(item._row, colIndex_(headers, 'OBSERVACIONES')).setValue(obsNueva);
+  sh.getRange(item._row, colIndex_(headers, 'ULTIMA_ACTUALIZACION')).setValue(formatDate_(now_()));
+  return { ok: true, message: 'Tarea finalizada.' };
+}
+
+function adminUpdate_(params) {
+  if (String(params.adminPass || '') !== ADMIN_PASS) throw new Error('Clave de administrador incorrecta.');
+  const { sh, headers, item } = findPizarraById_(params.id);
+
+  if (params.prioridad) sh.getRange(item._row, colIndex_(headers, 'PRIORIDAD')).setValue(params.prioridad);
+  if (params.tiempoEstimadoDias !== undefined) sh.getRange(item._row, colIndex_(headers, 'TIEMPO_ESTIMADO_DIAS')).setValue(params.tiempoEstimadoDias);
+  if (params.fechaVencimiento) sh.getRange(item._row, colIndex_(headers, 'FECHA_VENCIMIENTO')).setValue(params.fechaVencimiento);
+  if (params.observaciones !== undefined) sh.getRange(item._row, colIndex_(headers, 'OBSERVACIONES')).setValue(params.observaciones);
+  sh.getRange(item._row, colIndex_(headers, 'ULTIMA_ACTUALIZACION')).setValue(formatDate_(now_()));
+
+  return { ok: true, message: 'Tarea actualizada.' };
+}
+
+function createTaskFromNovedad_(params) {
+  const id = createPizarraTask_({
+    origen: params.origen || 'Novedad equipamiento',
+    ubicacion: params.ubicacion || '',
+    elemento: params.elemento || '',
+    tarea: params.tarea || params.novedad || '',
+    prioridad: params.prioridad || 'Media',
+    tiempoEstimadoDias: params.tiempoEstimadoDias || '',
+    fechaVencimiento: params.fechaVencimiento || '',
+    observaciones: params.observaciones || '',
+    fotos: params.fotos || '',
+    creadoPor: params.creadoPor || params.usuario || ''
+  });
+  return { ok: true, message: 'Tarea creada desde novedad.', id };
+}
+
+function createPizarraTask_(data) {
+  const { sh, headers, items } = getPizarraData_();
+  const id = nextId_(items);
+  const row = headers.map(h => '');
+  const fechaAlta = formatDate_(now_());
+  const dias = data.tiempoEstimadoDias || '';
+  let vencimiento = data.fechaVencimiento || '';
+  if (!vencimiento && dias !== '') {
+    const d = now_();
+    d.setDate(d.getDate() + Number(dias));
+    vencimiento = onlyDate_(d);
+  }
+
+  setRowValue_(row, headers, 'ID', id);
+  setRowValue_(row, headers, 'FECHA_ALTA', fechaAlta);
+  setRowValue_(row, headers, 'ORIGEN', data.origen || 'Novedad equipamiento');
+  setRowValue_(row, headers, 'UBICACION', data.ubicacion || '');
+  setRowValue_(row, headers, 'ELEMENTO', data.elemento || '');
+  setRowValue_(row, headers, 'TAREA', data.tarea || '');
+  setRowValue_(row, headers, 'PRIORIDAD', data.prioridad || 'Media');
+  setRowValue_(row, headers, 'TIEMPO_ESTIMADO_DIAS', dias);
+  setRowValue_(row, headers, 'FECHA_VENCIMIENTO', vencimiento);
+  setRowValue_(row, headers, 'ESTADO', 'Disponible');
+  setRowValue_(row, headers, 'OBSERVACIONES', data.observaciones || '');
+  setRowValue_(row, headers, 'FOTOS', data.fotos || '');
+  setRowValue_(row, headers, 'CREADO_POR', data.creadoPor || '');
+  setRowValue_(row, headers, 'ULTIMA_ACTUALIZACION', fechaAlta);
+
+  sh.appendRow(row);
+  return id;
+}
+
+/*************** MAIL DIARIO 23 HS ***************/
+function sendDailyNews() {
+  const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+  const sh = ss.getSheetByName('NOVEDADES');
+  if (!sh || sh.getLastRow() < 2) return;
+  const values = sh.getDataRange().getValues();
+  const headers = values[0];
+  const enviadoIdx = headers.indexOf('Enviado');
+  const pending = values.slice(1)
+    .map((row, i) => ({ row, rowNumber: i + 2 }))
+    .filter(x => !x.row[enviadoIdx]);
+  if (!pending.length) return;
+
+  const htmlRows = pending.map(x => `<tr>${x.row.map(c => `<td>${esc(c)}</td>`).join('')}</tr>`).join('');
+  const html = `<p>Resumen diario acumulado de novedades de Control de equipamiento.</p><table border="1" cellpadding="5" cellspacing="0"><thead><tr>${headers.map(h => `<th>${esc(h)}</th>`).join('')}</tr></thead><tbody>${htmlRows}</tbody></table>`;
+  MailApp.sendEmail({ to: NOVEDADES_EMAIL, subject: 'Resumen diario de novedades - Control de equipamiento', htmlBody: html });
+  pending.forEach(x => sh.getRange(x.rowNumber, enviadoIdx + 1).setValue(new Date()));
+}
+
+function createDailyTrigger() {
+  ScriptApp.getProjectTriggers().filter(t => t.getHandlerFunction() === 'sendDailyNews').forEach(t => ScriptApp.deleteTrigger(t));
+  ScriptApp.newTrigger('sendDailyNews').timeBased().everyDays(1).atHour(23).create();
+}
+
+/*************** HELPERS ***************/
+function getOrCreateFolder_(parent, name) {
+  const it = parent.getFoldersByName(name);
+  return it.hasNext() ? it.next() : parent.createFolder(name);
+}
+
+function getOrCreateSheet_(name, headers) {
+  const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+  let sh = ss.getSheetByName(name);
+  if (!sh) sh = ss.insertSheet(name);
+  if (sh.getLastRow() === 0) sh.appendRow(headers);
+  return sh;
+}
+
 function colIndex_(headers, name) {
   const idx = headers.indexOf(name);
   if (idx === -1) throw new Error('Falta la columna: ' + name);
   return idx + 1;
+}
+
+function setRowValue_(row, headers, name, value) {
+  const idx = headers.indexOf(name);
+  if (idx !== -1) row[idx] = value;
 }
 
 function now_() {
@@ -86,21 +524,12 @@ function parseDate_(value) {
   return isNaN(d.getTime()) ? null : d;
 }
 
-function sameOrBeforeToday_(value) {
-  const d = parseDate_(value);
-  if (!d) return false;
-  const today = new Date();
-  today.setHours(0,0,0,0);
-  d.setHours(0,0,0,0);
-  return d < today;
-}
-
 function daysSince_(value) {
   const d = parseDate_(value);
   if (!d) return 0;
   const today = new Date();
-  today.setHours(0,0,0,0);
-  d.setHours(0,0,0,0);
+  today.setHours(0, 0, 0, 0);
+  d.setHours(0, 0, 0, 0);
   return Math.floor((today - d) / (1000 * 60 * 60 * 24));
 }
 
@@ -112,156 +541,74 @@ function nextId_(items) {
   return maxId + 1;
 }
 
-function listTasks_() {
-  const releasedExpired = releaseExpired_();
-  const { items } = getData_();
+function normalizeDateKey_(value) {
+  const tz = Session.getScriptTimeZone();
 
-  const visible = items.filter(item => {
-    const estado = String(item.ESTADO || '').trim();
-    if (estado === 'Finalizada') {
-      return daysSince_(item.FECHA_FINALIZACION) <= FINALIZADAS_VISIBLES_DIAS;
-    }
-    return true;
-  }).map(item => normalizeForClient_(item));
-
-  return { ok: true, tasks: visible, releasedExpired };
-}
-
-function normalizeForClient_(item) {
-  const copy = {};
-  Object.keys(item).forEach(k => {
-    if (k === '_row') return;
-    let v = item[k];
-    if (Object.prototype.toString.call(v) === '[object Date]') {
-      if (k.includes('FECHA')) v = onlyDate_(v);
-      else v = formatDate_(v);
-    }
-    copy[k] = v === null || v === undefined ? '' : String(v);
-  });
-  copy.VENCIDA = String(item.ESTADO) === 'Asignada' && sameOrBeforeToday_(item.FECHA_VENCIMIENTO);
-  return copy;
-}
-
-function releaseExpired_() {
-  const { sh, headers, items } = getData_();
-  const cEstado = colIndex_(headers, 'ESTADO');
-  const cAsignado = colIndex_(headers, 'ASIGNADO_A');
-  const cUltimo = colIndex_(headers, 'ULTIMO_ASIGNADO');
-  const cObs = colIndex_(headers, 'OBSERVACIONES');
-  const cUpd = colIndex_(headers, 'ULTIMA_ACTUALIZACION');
-
-  let count = 0;
-  items.forEach(item => {
-    if (String(item.ESTADO).trim() === 'Asignada' && sameOrBeforeToday_(item.FECHA_VENCIMIENTO)) {
-      const anterior = item.ASIGNADO_A || '';
-      const obsActual = item.OBSERVACIONES || '';
-      const obsNueva = String(obsActual) + (obsActual ? '\n' : '') + 'Tarea vencida. Liberada automáticamente el ' + formatDate_(now_()) + '.';
-      sh.getRange(item._row, cEstado).setValue('Disponible');
-      sh.getRange(item._row, cUltimo).setValue(anterior);
-      sh.getRange(item._row, cAsignado).setValue('');
-      sh.getRange(item._row, cObs).setValue(obsNueva);
-      sh.getRange(item._row, cUpd).setValue(formatDate_(now_()));
-      count++;
-    }
-  });
-  return count;
-}
-
-function findById_(id) {
-  const data = getData_();
-  const item = data.items.find(x => String(x.ID) === String(id));
-  if (!item) throw new Error('No se encontró la tarea ID ' + id);
-  return { ...data, item };
-}
-
-function assignTask_(params) {
-  const user = String(params.user || '').trim();
-  if (!user) throw new Error('Falta el nombre de quien toma la tarea.');
-  const { sh, headers, item } = findById_(params.id);
-  if (String(item.ESTADO).trim() !== 'Disponible') {
-    throw new Error('La tarea no está disponible.');
+  if (Object.prototype.toString.call(value) === '[object Date]' && !isNaN(value)) {
+    return Utilities.formatDate(value, tz, 'yyyy-MM-dd');
   }
-  sh.getRange(item._row, colIndex_(headers, 'ESTADO')).setValue('Asignada');
-  sh.getRange(item._row, colIndex_(headers, 'ASIGNADO_A')).setValue(user);
-  sh.getRange(item._row, colIndex_(headers, 'FECHA_ASIGNACION')).setValue(formatDate_(now_()));
-  sh.getRange(item._row, colIndex_(headers, 'ULTIMA_ACTUALIZACION')).setValue(formatDate_(now_()));
-  return { ok: true, message: 'Tarea asignada.' };
+
+  const text = String(value || '').trim();
+  if (!text) return '';
+
+  const iso = text.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (iso) return `${iso[1]}-${iso[2]}-${iso[3]}`;
+
+  const ar = text.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})/);
+  if (ar) return `${ar[3]}-${String(ar[2]).padStart(2, '0')}-${String(ar[1]).padStart(2, '0')}`;
+
+  const parsed = new Date(text);
+  if (!isNaN(parsed)) return Utilities.formatDate(parsed, tz, 'yyyy-MM-dd');
+
+  return text;
 }
 
-function finishTask_(params) {
-  const { sh, headers, item } = findById_(params.id);
-  const obsCierre = String(params.observaciones || '').trim();
-  const obsActual = item.OBSERVACIONES || '';
-  const obsNueva = obsCierre ? String(obsActual) + (obsActual ? '\n' : '') + 'Cierre: ' + obsCierre : obsActual;
-
-  sh.getRange(item._row, colIndex_(headers, 'ESTADO')).setValue('Finalizada');
-  sh.getRange(item._row, colIndex_(headers, 'FECHA_FINALIZACION')).setValue(formatDate_(now_()));
-  sh.getRange(item._row, colIndex_(headers, 'OBSERVACIONES')).setValue(obsNueva);
-  sh.getRange(item._row, colIndex_(headers, 'ULTIMA_ACTUALIZACION')).setValue(formatDate_(now_()));
-  return { ok: true, message: 'Tarea finalizada.' };
+function formatControlDate_(value) {
+  if (!value) return '-';
+  const parts = String(value).split('-');
+  if (parts.length === 3) return `${parts[2]}/${parts[1]}/${parts[0]}`;
+  return String(value);
 }
 
-function adminUpdate_(params) {
-  if (String(params.adminPass || '') !== ADMIN_PASS) throw new Error('Clave de administrador incorrecta.');
-  const { sh, headers, item } = findById_(params.id);
-
-  if (params.prioridad) sh.getRange(item._row, colIndex_(headers, 'PRIORIDAD')).setValue(params.prioridad);
-  if (params.tiempoEstimadoDias !== undefined) sh.getRange(item._row, colIndex_(headers, 'TIEMPO_ESTIMADO_DIAS')).setValue(params.tiempoEstimadoDias);
-  if (params.fechaVencimiento) sh.getRange(item._row, colIndex_(headers, 'FECHA_VENCIMIENTO')).setValue(params.fechaVencimiento);
-  if (params.observaciones !== undefined) sh.getRange(item._row, colIndex_(headers, 'OBSERVACIONES')).setValue(params.observaciones);
-  sh.getRange(item._row, colIndex_(headers, 'ULTIMA_ACTUALIZACION')).setValue(formatDate_(now_()));
-
-  return { ok: true, message: 'Tarea actualizada.' };
+function normalizeHeader_(s) {
+  return String(s || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim();
 }
 
-function createTaskFromNovedad_(params) {
-  const { sh, headers, items } = getData_();
-  const id = nextId_(items);
-  const row = headers.map(h => '');
+function isInternalSheet_(name) {
+  return INTERNAL_SHEETS.includes(String(name || '').trim().toUpperCase());
+}
 
-  const set = (name, value) => {
-    const idx = headers.indexOf(name);
-    if (idx !== -1) row[idx] = value;
+function normalizeDay_(s) {
+  const clean = normalizeHeader_(s);
+  const map = {
+    lunes: 'Lunes',
+    martes: 'Martes',
+    miercoles: 'Miercoles',
+    jueves: 'Jueves',
+    viernes: 'Viernes',
+    sabado: 'Sabado',
+    domingo: 'Domingo'
   };
-
-  const fechaAlta = formatDate_(now_());
-  const prioridad = params.prioridad || 'Media';
-  const dias = params.tiempoEstimadoDias || '';
-  let vencimiento = params.fechaVencimiento || '';
-  if (!vencimiento && dias !== '') {
-    const d = now_();
-    d.setDate(d.getDate() + Number(dias));
-    vencimiento = onlyDate_(d);
-  }
-
-  set('ID', id);
-  set('FECHA_ALTA', fechaAlta);
-  set('ORIGEN', params.origen || 'Novedad equipamiento');
-  set('UBICACION', params.ubicacion || '');
-  set('ELEMENTO', params.elemento || '');
-  set('TAREA', params.tarea || params.novedad || '');
-  set('PRIORIDAD', prioridad);
-  set('TIEMPO_ESTIMADO_DIAS', dias);
-  set('FECHA_VENCIMIENTO', vencimiento);
-  set('ESTADO', 'Disponible');
-  set('OBSERVACIONES', params.observaciones || '');
-  set('FOTOS', params.fotos || '');
-  set('CREADO_POR', params.creadoPor || params.usuario || '');
-  set('ULTIMA_ACTUALIZACION', fechaAlta);
-
-  sh.appendRow(row);
-  return { ok: true, message: 'Tarea creada desde novedad.', id };
+  return map[clean] || '';
 }
 
-/******************************************************
- * FUNCIÓN AUXILIAR PARA PROBAR DESDE APPS SCRIPT
- ******************************************************/
+function esc(v) {
+  return String(v ?? '').replace(/[&<>'"]/g, c => ({
+    '&': '&amp;',
+    '<': '&lt;',
+    '>': '&gt;',
+    "'": '&#39;',
+    '"': '&quot;'
+  }[c]));
+}
+
+/*************** PRUEBAS MANUALES ***************/
 function pruebaCrearTarea() {
   const res = createTaskFromNovedad_({
     origen: 'Prueba manual',
-    ubicacion: 'Móvil 1',
+    ubicacion: 'Movil 1',
     elemento: 'Linterna',
-    tarea: 'Revisar batería / carga.',
+    tarea: 'Revisar bateria / carga.',
     prioridad: 'Media',
     tiempoEstimadoDias: '7',
     usuario: 'Prueba'

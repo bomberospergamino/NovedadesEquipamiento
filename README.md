@@ -26,12 +26,12 @@ ID	FECHA_ALTA	ORIGEN	UBICACION	ELEMENTO	TAREA	PRIORIDAD	TIEMPO_ESTIMADO_DIAS	FEC
 
 1. Abrir el Google Sheet.
 2. Ir a `Extensiones > Apps Script`.
-3. Pegar el contenido de `Code.gs`.
+3. Pegar el contenido de `Code.gs`. Este archivo ya está unificado: conserva el control de equipamiento, PDF, mail diario y también agrega la pizarra.
 4. Cambiar estas constantes:
 
 ```js
-const SPREADSHEET_ID = 'PEGAR_ID_DE_TU_GOOGLE_SHEET';
-const ADMIN_PASS = 'CAMBIAR_CLAVE_ADMIN';
+const SPREADSHEET_ID = '1iej80w--kZK_N33UTq9FbDbA0air3qFimrDIB1QAxZ0';
+const ADMIN_PASS = '1105';
 ```
 
 El `SPREADSHEET_ID` está en la URL del Sheet:
@@ -52,9 +52,10 @@ https://docs.google.com/spreadsheets/d/ESTE_ES_EL_ID/edit
 - Tomar/autoasignar tarea.
 - Finalizar tarea.
 - Modo administrador para editar prioridad, días estimados, vencimiento y observaciones.
-- Liberación automática de tareas vencidas al actualizar la pizarra.
+- Liberación automática de tareas asignadas que no se finalizaron después de 5 días.
 - Ocultamiento visual de tareas finalizadas con más de 7 días.
 - Creación automática de tareas desde novedades mediante endpoint `createFromNovedad`.
+- Creación automática de tarjetas en `PIZARRA` cuando el control de equipamiento guarda novedades.
 
 ## Endpoint para crear tarea automática desde otro repo
 

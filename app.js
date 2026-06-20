@@ -1,6 +1,8 @@
 const CONFIG_KEY = 'novedadesEquipamientoScriptUrl';
 const USER_KEY = 'novedadesEquipamientoUserName';
 const ADMIN_KEY = 'novedadesEquipamientoAdmin';
+const ADMIN_PASS = '1105';
+const DEFAULT_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbzYiO560Az_Eo_hPzAxeczftZG4h9M3SEPjm-ACtrKzfdtHj_CRiqCCenM3KkIy6vyx/exec';
 
 let allTasks = [];
 let adminMode = localStorage.getItem(ADMIN_KEY) === 'true';
@@ -28,7 +30,8 @@ const els = {
 init();
 
 function init() {
-  els.scriptUrl.value = localStorage.getItem(CONFIG_KEY) || '';
+  if (!localStorage.getItem(CONFIG_KEY)) localStorage.setItem(CONFIG_KEY, DEFAULT_SCRIPT_URL);
+  els.scriptUrl.value = getScriptUrl();
   els.userName.value = localStorage.getItem(USER_KEY) || '';
   els.userName.addEventListener('input', () => localStorage.setItem(USER_KEY, els.userName.value.trim()));
   els.saveConfig.addEventListener('click', saveConfig);
@@ -42,7 +45,7 @@ function init() {
 }
 
 function getScriptUrl() {
-  return localStorage.getItem(CONFIG_KEY) || '';
+  return localStorage.getItem(CONFIG_KEY) || DEFAULT_SCRIPT_URL;
 }
 
 function saveConfig() {
@@ -68,9 +71,14 @@ function updateAdminVisibility() {
 function toggleAdmin() {
   if (adminMode) {
     adminMode = false;
+    localStorage.removeItem('adminPass');
   } else {
     const pass = prompt('Clave de administrador');
     if (!pass) return;
+    if (pass !== ADMIN_PASS) {
+      showToast('Clave de administrador incorrecta.');
+      return;
+    }
     adminMode = true;
     localStorage.setItem('adminPass', pass);
   }
@@ -138,8 +146,8 @@ function renderList(container, tasks) {
 
 function createTaskCard(task) {
   const card = document.createElement('article');
-  card.className = `task-card ${task.VENCIDA ? 'overdue' : ''}`;
   const prioridad = (task.PRIORIDAD || 'Media').toLowerCase();
+  card.className = `task-card priority-card-${prioridad} ${task.VENCIDA ? 'overdue' : ''}`;
   card.innerHTML = `
     <div class="task-top">
       <div><strong>#${escapeHtml(task.ID)}</strong></div>
@@ -152,6 +160,7 @@ function createTaskCard(task) {
       <span><strong>Vencimiento:</strong> ${escapeHtml(task.FECHA_VENCIMIENTO || '-')}</span>
       <span><strong>Estado:</strong> ${escapeHtml(task.ESTADO || '-')}</span>
       ${task.ASIGNADO_A ? `<span><strong>Asignado a:</strong> ${escapeHtml(task.ASIGNADO_A)}</span>` : ''}
+      ${task.FECHA_ASIGNACION ? `<span><strong>Asignada desde:</strong> ${escapeHtml(task.FECHA_ASIGNACION)}</span>` : ''}
       ${task.OBSERVACIONES ? `<span><strong>Obs:</strong> ${escapeHtml(task.OBSERVACIONES)}</span>` : ''}
     </div>
     <div class="actions"></div>

@@ -57,7 +57,7 @@ function doPost(e) {
   try {
     const body = JSON.parse(e.postData.contents || '{}');
     if (body.action !== 'submit') throw new Error('Accion no valida');
-    const result = saveSubmission_(body.payload);
+    const result = saveSubmission_(body.payload, body.pdfBase64, body.filename);
     return jsonResponse({ ok: true, ...result });
   } catch (err) {
     return jsonResponse({ ok: false, message: err.message, error: err.message });
@@ -170,12 +170,14 @@ function getActivityItems_(sheetName) {
 }
 
 /*************** GUARDADO CONTROL, PDF Y NOVEDADES ***************/
-function saveSubmission_(payload) {
+function saveSubmission_(payload, pdfBase64, requestedFilename) {
   if (!payload || !payload.activity) throw new Error('Falta actividad');
   const now = new Date();
   const folder = getOrCreateFolder_(DriveApp.getFolderById(ROOT_FOLDER_ID), payload.activity);
-  const pdfBlob = buildPdf_(payload, now);
-  const filename = `Control_${payload.activity}_${Utilities.formatDate(now, Session.getScriptTimeZone(), 'yyyy-MM-dd_HH-mm')}.pdf`;
+  const pdfBlob = pdfBase64
+    ? Utilities.newBlob(Utilities.base64Decode(pdfBase64), MimeType.PDF)
+    : buildPdf_(payload, now);
+  const filename = requestedFilename || `Control_${payload.activity}_${Utilities.formatDate(now, Session.getScriptTimeZone(), 'yyyy-MM-dd_HH-mm')}.pdf`;
   const file = folder.createFile(pdfBlob.setName(filename));
 
   appendRegistro_(payload, now, file.getUrl());
@@ -186,30 +188,39 @@ function saveSubmission_(payload) {
 
 function buildPdf_(payload, now) {
   const novedades = getNovedadesFromPayload_(payload);
-  const rowsHtml = (payload.responses || []).map(r => {
-    const isBad = r.condicionEstado === 'Mal';
-    const isWarn = r.cantidadEstado !== 'Correcto' || r.condicionEstado === 'Regular';
-    const cls = isBad ? 'bad' : (isWarn ? 'warn' : '');
-    return `<tr class="${cls}"><td>${esc(r.ubicacion)}</td><td>${esc(r.elemento)}</td><td>${esc(r.cantidadEsperada)}</td><td>${esc(r.cantidadEstado)}</td><td>${esc(r.condicionEstado)}</td></tr>`;
-  }).join('');
+  const locationTablesHtml = buildLocationTablesHtml_(payload.responses || []);
+  const logoHtml = getLogoHtml_();
 
   const html = `
   <html><head><style>
-    body{font-family:Arial,sans-serif;color:#17212b} h1{color:#063452;margin:0} h2{color:#063452;margin-bottom:4px}.top{border-bottom:4px solid #df3438;padding-bottom:10px;margin-bottom:12px}.meta{font-size:12px;margin-bottom:14px}table{width:100%;border-collapse:collapse;font-size:11px}th,td{border:1px solid #b8c5d0;padding:6px;vertical-align:top}th{background:#063452;color:white}.warn{background:#fff2a8}.bad{background:#ffd6d6}.obs{border:1px solid #b8c5d0;padding:8px;margin-top:12px;min-height:45px}.nov{margin-top:12px;background:#fff7d4;padding:8px;border:1px solid #e4cf62}
+    body{font-family:Arial,sans-serif;color:#162332;margin:0} .top{background:#05263a;color:white;border-bottom:5px solid #dc3338;padding:14px 16px 12px;margin-bottom:14px;position:relative;min-height:78px} h1{color:white;margin:0;font-size:24px} .institution{font-weight:bold;margin-top:4px}.logo{position:absolute;right:16px;top:9px;width:64px;height:64px;object-fit:contain;background:white;border:2px solid #dc3338;border-radius:8px;padding:4px}.logo-fallback{position:absolute;right:16px;top:14px;width:64px;height:48px;border:2px solid #dc3338;border-radius:8px;background:white;color:#07344f;font-weight:bold;text-align:center;padding-top:18px}.meta{font-size:12px;margin:0 16px 14px}.section-title{background:#07344f;color:white;padding:6px 8px;border-radius:4px;margin:12px 16px 0;font-weight:bold;font-size:12px}table{width:calc(100% - 32px);margin:0 16px 10px;border-collapse:collapse;font-size:10.5px}th,td{border:1px solid #d7e1e7;padding:6px;vertical-align:top}th{background:#05263a;color:white}.warn{background:#fffde3}.bad{background:#fff1f1}.obs{border:1px solid #d7e1e7;padding:8px;margin:6px 16px 12px;min-height:45px}.nov{margin:12px 16px;background:#fffde3;padding:8px;border:1px solid #f2ec2e}
   </style></head><body>
-    <div class="top"><h1>Control de equipamiento</h1><strong>${INSTITUTION}</strong></div>
+    <div class="top"><h1>Control de equipamiento</h1><div class="institution">${INSTITUTION}</div>${logoHtml}</div>
     <div class="meta">
       <div><b>Actividad:</b> ${esc(payload.activity)}</div>
       <div><b>Fecha:</b> ${esc(formatControlDate_(payload.fechaControl))}</div>
       <div><b>Responsable/s:</b> ${esc(payload.responsable || '-')}</div>
       <div><b>Generado:</b> ${Utilities.formatDate(now, Session.getScriptTimeZone(), 'dd/MM/yyyy HH:mm')}</div>
     </div>
-    <table><thead><tr><th>Ubicacion</th><th>Elemento</th><th>Unidades</th><th>Cantidad</th><th>Condicion</th></tr></thead><tbody>${rowsHtml}</tbody></table>
+    ${locationTablesHtml}
     <h2>Observaciones generales</h2><div class="obs">${esc(payload.observaciones || '-')}</div>
     <div class="nov"><b>Novedades detectadas:</b> ${novedades.length}</div>
   </body></html>`;
 
   return HtmlService.createHtmlOutput(html).getBlob().getAs(MimeType.PDF);
+}
+
+function buildLocationTablesHtml_(responses) {
+  const groups = groupResponsesByLocation_(responses);
+  return groups.map(group => {
+    const rowsHtml = group.rows.map(r => {
+      const isBad = isCondicionBad_(r.condicionEstado);
+      const isWarn = !isCantidadOk_(r.cantidadEstado) || String(r.condicionEstado || '').trim() === 'Regular';
+      const cls = isBad ? 'bad' : (isWarn ? 'warn' : '');
+      return `<tr class="${cls}"><td>${esc(r.elemento)}</td><td>${esc(r.cantidadEsperada)}</td><td>${esc(r.cantidadEstado)}</td><td>${esc(r.condicionEstado)}</td><td>${esc(r.observacionFila || '-')}</td></tr>`;
+    }).join('');
+    return `<div class="section-title">Ubicacion ${esc(group.location)}</div><table><thead><tr><th>Elemento</th><th>Unidades</th><th>Cantidad</th><th>Condicion</th><th>Obs.</th></tr></thead><tbody>${rowsHtml}</tbody></table>`;
+  }).join('');
 }
 
 function appendRegistro_(payload, now, pdfUrl) {
@@ -227,11 +238,11 @@ function appendNovedades_(payload, now, pdfUrl) {
     sh.appendRow([now, '', payload.fechaControl || '', payload.activity, payload.responsable || '', n.ubicacion, n.elemento, n.cantidadEsperada, n.cantidadEstado, n.condicionEstado, payload.observaciones || '', pdfUrl]);
     createPizarraTask_({
       origen: 'Control de equipamiento',
-      ubicacion: n.ubicacion || payload.activity || '',
+      ubicacion: buildPizarraLocation_(payload.activity, n.ubicacion),
       elemento: n.elemento || '',
       tarea: buildTaskText_(n),
-      prioridad: inferPriority_(n),
-      observaciones: payload.observaciones || '',
+      prioridad: '',
+      observaciones: joinNotes_(payload.observaciones, n.observacionFila),
       fotos: pdfUrl,
       creadoPor: payload.responsable || ''
     });
@@ -239,35 +250,82 @@ function appendNovedades_(payload, now, pdfUrl) {
 
   if (!novedades.length && payload.observaciones) {
     sh.appendRow([now, '', payload.fechaControl || '', payload.activity, payload.responsable || '', '-', '-', '-', '-', '-', payload.observaciones, pdfUrl]);
-    createPizarraTask_({
-      origen: 'Observacion de control',
-      ubicacion: payload.activity || '',
-      elemento: 'Observacion general',
-      tarea: payload.observaciones,
-      prioridad: 'Media',
-      observaciones: 'Generada desde observaciones generales del control.',
-      fotos: pdfUrl,
-      creadoPor: payload.responsable || ''
-    });
   }
 }
 
 function getNovedadesFromPayload_(payload) {
-  return (payload.responses || []).filter(r => r.cantidadEstado !== 'Correcto' || r.condicionEstado !== 'Bueno');
+  return (payload.responses || []).filter(r => !isCantidadOk_(r.cantidadEstado) || !isCondicionOk_(r.condicionEstado));
 }
 
 function buildTaskText_(n) {
   const parts = [];
-  if (n.cantidadEstado && n.cantidadEstado !== 'Correcto') parts.push('Cantidad: ' + n.cantidadEstado);
-  if (n.condicionEstado && n.condicionEstado !== 'Bueno') parts.push('Condicion: ' + n.condicionEstado);
+  if (n.cantidadEstado && !isCantidadOk_(n.cantidadEstado)) parts.push('Cantidad: ' + n.cantidadEstado);
+  if (n.condicionEstado && !isCondicionOk_(n.condicionEstado)) parts.push('Condicion: ' + n.condicionEstado);
+  if (n.observacionFila) parts.push('Obs: ' + n.observacionFila);
   return parts.length ? parts.join(' / ') : 'Revisar novedad reportada';
 }
 
-function inferPriority_(n) {
-  if (String(n.condicionEstado || '').trim() === 'Mal') return 'Alta';
-  if (String(n.condicionEstado || '').trim() === 'Regular') return 'Media';
-  if (String(n.cantidadEstado || '').trim() !== 'Correcto') return 'Media';
-  return 'Baja';
+function buildPizarraLocation_(activity, ubicacion) {
+  return [activity, ubicacion]
+    .map(v => String(v || '').trim())
+    .filter(Boolean)
+    .join(' - ');
+}
+
+function isCantidadOk_(value) {
+  const text = normalizeHeader_(value);
+  return text === 'bien' || text === 'correcto';
+}
+
+function isCondicionOk_(value) {
+  return normalizeHeader_(value) === 'bueno';
+}
+
+function isCondicionBad_(value) {
+  const text = normalizeHeader_(value);
+  return text === 'malo' || text === 'mal';
+}
+
+function joinNotes_() {
+  return Array.prototype.slice.call(arguments)
+    .map(v => String(v || '').trim())
+    .filter(Boolean)
+    .join('\n');
+}
+
+function groupResponsesByLocation_(responses) {
+  const sorted = (responses || []).slice().sort((a, b) => {
+    const byLocation = String(a.ubicacion || '').localeCompare(String(b.ubicacion || ''), 'es', { numeric: true, sensitivity: 'base' });
+    if (byLocation !== 0) return byLocation;
+    const ao = Number(a.ordenUbicacion);
+    const bo = Number(b.ordenUbicacion);
+    if (isFinite(ao) && isFinite(bo) && ao !== bo) return ao - bo;
+    return String(a.elemento || '').localeCompare(String(b.elemento || ''), 'es', { numeric: true, sensitivity: 'base' });
+  });
+  const groups = {};
+  const order = [];
+  sorted.forEach(row => {
+    const location = row.ubicacion || 'Sin ubicacion';
+    if (!groups[location]) {
+      groups[location] = [];
+      order.push(location);
+    }
+    groups[location].push(row);
+  });
+  return order.map(location => ({ location, rows: groups[location] }));
+}
+
+function getLogoHtml_() {
+  try {
+    const root = DriveApp.getFolderById(ROOT_FOLDER_ID);
+    const files = root.getFilesByName('logo-sbvp.png');
+    if (!files.hasNext()) return '<div class="logo-fallback">SBVP</div>';
+    const file = files.next();
+    const data = Utilities.base64Encode(file.getBlob().getBytes());
+    return `<img class="logo" src="data:${file.getMimeType()};base64,${data}" />`;
+  } catch (err) {
+    return '<div class="logo-fallback">SBVP</div>';
+  }
 }
 
 /*************** PIZARRA ***************/
@@ -395,7 +453,7 @@ function adminUpdate_(params) {
   if (String(params.adminPass || '') !== ADMIN_PASS) throw new Error('Clave de administrador incorrecta.');
   const { sh, headers, item } = findPizarraById_(params.id);
 
-  if (params.prioridad) sh.getRange(item._row, colIndex_(headers, 'PRIORIDAD')).setValue(params.prioridad);
+  if (params.prioridad !== undefined) sh.getRange(item._row, colIndex_(headers, 'PRIORIDAD')).setValue(params.prioridad);
   if (params.tiempoEstimadoDias !== undefined) sh.getRange(item._row, colIndex_(headers, 'TIEMPO_ESTIMADO_DIAS')).setValue(params.tiempoEstimadoDias);
   if (params.fechaVencimiento) sh.getRange(item._row, colIndex_(headers, 'FECHA_VENCIMIENTO')).setValue(params.fechaVencimiento);
   if (params.observaciones !== undefined) sh.getRange(item._row, colIndex_(headers, 'OBSERVACIONES')).setValue(params.observaciones);
@@ -410,7 +468,7 @@ function createTaskFromNovedad_(params) {
     ubicacion: params.ubicacion || '',
     elemento: params.elemento || '',
     tarea: params.tarea || params.novedad || '',
-    prioridad: params.prioridad || 'Media',
+    prioridad: params.prioridad || '',
     tiempoEstimadoDias: params.tiempoEstimadoDias || '',
     fechaVencimiento: params.fechaVencimiento || '',
     observaciones: params.observaciones || '',
@@ -439,7 +497,7 @@ function createPizarraTask_(data) {
   setRowValue_(row, headers, 'UBICACION', data.ubicacion || '');
   setRowValue_(row, headers, 'ELEMENTO', data.elemento || '');
   setRowValue_(row, headers, 'TAREA', data.tarea || '');
-  setRowValue_(row, headers, 'PRIORIDAD', data.prioridad || 'Media');
+  setRowValue_(row, headers, 'PRIORIDAD', data.prioridad || '');
   setRowValue_(row, headers, 'TIEMPO_ESTIMADO_DIAS', dias);
   setRowValue_(row, headers, 'FECHA_VENCIMIENTO', vencimiento);
   setRowValue_(row, headers, 'ESTADO', 'Disponible');
@@ -609,7 +667,7 @@ function pruebaCrearTarea() {
     ubicacion: 'Movil 1',
     elemento: 'Linterna',
     tarea: 'Revisar bateria / carga.',
-    prioridad: 'Media',
+    prioridad: '',
     tiempoEstimadoDias: '7',
     usuario: 'Prueba'
   });

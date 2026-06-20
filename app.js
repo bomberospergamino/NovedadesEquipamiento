@@ -146,12 +146,13 @@ function renderList(container, tasks) {
 
 function createTaskCard(task) {
   const card = document.createElement('article');
-  const prioridad = (task.PRIORIDAD || 'Media').toLowerCase();
+  const prioridad = (task.PRIORIDAD || 'sin-prioridad').toLowerCase();
+  const prioridadLabel = task.PRIORIDAD || 'Sin prioridad';
   card.className = `task-card priority-card-${prioridad} ${task.VENCIDA ? 'overdue' : ''}`;
   card.innerHTML = `
     <div class="task-top">
       <div><strong>#${escapeHtml(task.ID)}</strong></div>
-      <span class="priority ${prioridad}">${escapeHtml(task.PRIORIDAD || 'Media')}</span>
+      <span class="priority ${prioridad}">${escapeHtml(prioridadLabel)}</span>
     </div>
     <div class="task-title">${escapeHtml(task.TAREA || 'Sin descripción')}</div>
     <div class="meta">
@@ -222,14 +223,14 @@ function toggleAdminEdit(card, task) {
   box.className = 'admin-edit';
   box.innerHTML = `
     <div class="admin-grid">
-      <div class="field"><label>Prioridad</label><select class="adm-priority"><option>Baja</option><option>Media</option><option>Alta</option></select></div>
+      <div class="field"><label>Prioridad</label><select class="adm-priority"><option value="">Sin prioridad</option><option>Baja</option><option>Media</option><option>Alta</option></select></div>
       <div class="field"><label>Tiempo estimado días</label><input class="adm-days" type="number" min="0" step="1" value="${escapeAttr(task.TIEMPO_ESTIMADO_DIAS || '')}"></div>
     </div>
     <div class="field"><label>Fecha vencimiento</label><input class="adm-due" type="date" value="${toDateInput(task.FECHA_VENCIMIENTO)}"></div>
     <div class="field"><label>Observaciones</label><textarea class="adm-obs">${escapeHtml(task.OBSERVACIONES || '')}</textarea></div>
     <button class="btn primary small adm-save">Guardar cambios</button>
   `;
-  box.querySelector('.adm-priority').value = task.PRIORIDAD || 'Media';
+  box.querySelector('.adm-priority').value = task.PRIORIDAD || '';
   box.querySelector('.adm-save').addEventListener('click', () => saveAdminEdit(task.ID, box));
   card.appendChild(box);
 }

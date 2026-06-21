@@ -11,6 +11,7 @@ const els = {
   configPanel: document.getElementById('configPanel'),
   scriptUrl: document.getElementById('scriptUrl'),
   saveConfig: document.getElementById('saveConfig'),
+  btnBoardPdf: document.getElementById('btnBoardPdf'),
   btnRefresh: document.getElementById('btnRefresh'),
   btnAdmin: document.getElementById('btnAdmin'),
   adminPanel: document.getElementById('adminPanel'),
@@ -35,6 +36,7 @@ function init() {
   els.userName.value = localStorage.getItem(USER_KEY) || '';
   els.userName.addEventListener('input', () => localStorage.setItem(USER_KEY, els.userName.value.trim()));
   els.saveConfig.addEventListener('click', saveConfig);
+  els.btnBoardPdf.addEventListener('click', downloadBoardPdf);
   els.btnRefresh.addEventListener('click', loadTasks);
   els.btnAdmin.addEventListener('click', toggleAdmin);
   els.filterText.addEventListener('input', render);
@@ -118,7 +120,7 @@ function render() {
   const text = els.filterText.value.trim().toLowerCase();
   const priority = els.filterPriority.value;
   const filtered = allTasks.filter(t => {
-    const blob = `${t.ID} ${t.UBICACION} ${t.ELEMENTO} ${t.TAREA} ${t.ASIGNADO_A}`.toLowerCase();
+    const blob = `${t.ID} ${t.UBICACION} ${t.ELEMENTO} ${t.TAREA} ${t.ASIGNADO_A} ${t.CREADO_POR}`.toLowerCase();
     return (!text || blob.includes(text)) && (!priority || t.PRIORIDAD === priority);
   });
 
@@ -148,6 +150,11 @@ function createTaskCard(task) {
   const card = document.createElement('article');
   const prioridad = (task.PRIORIDAD || 'sin-prioridad').toLowerCase();
   const prioridadLabel = task.PRIORIDAD || 'Sin prioridad';
+  const adminMeta = adminMode ? `
+      <span><strong>Vencimiento:</strong> ${escapeHtml(task.FECHA_VENCIMIENTO || '-')}</span>
+      <span><strong>Estado:</strong> ${escapeHtml(task.ESTADO || '-')}</span>
+      ${task.FECHA_ASIGNACION ? `<span><strong>Asignada desde:</strong> ${escapeHtml(task.FECHA_ASIGNACION)}</span>` : ''}
+    ` : '';
   card.className = `task-card priority-card-${prioridad} ${task.VENCIDA ? 'overdue' : ''}`;
   card.innerHTML = `
     <div class="task-top">
@@ -158,10 +165,9 @@ function createTaskCard(task) {
     <div class="meta">
       <span><strong>Ubicación:</strong> ${escapeHtml(task.UBICACION || '-')}</span>
       <span><strong>Elemento:</strong> ${escapeHtml(task.ELEMENTO || '-')}</span>
-      <span><strong>Vencimiento:</strong> ${escapeHtml(task.FECHA_VENCIMIENTO || '-')}</span>
-      <span><strong>Estado:</strong> ${escapeHtml(task.ESTADO || '-')}</span>
+      ${task.CREADO_POR ? `<span><strong>Relevo:</strong> ${escapeHtml(task.CREADO_POR)}</span>` : ''}
       ${task.ASIGNADO_A ? `<span><strong>Asignado a:</strong> ${escapeHtml(task.ASIGNADO_A)}</span>` : ''}
-      ${task.FECHA_ASIGNACION ? `<span><strong>Asignada desde:</strong> ${escapeHtml(task.FECHA_ASIGNACION)}</span>` : ''}
+      ${adminMeta}
       ${task.OBSERVACIONES ? `<span><strong>Obs:</strong> ${escapeHtml(task.OBSERVACIONES)}</span>` : ''}
     </div>
     <div class="actions"></div>
@@ -250,6 +256,89 @@ async function saveAdminEdit(id, box) {
   } catch (error) {
     showToast(error.message);
   }
+}
+
+function downloadBoardPdf() {
+  if (!allTasks.length) {
+    showToast('No hay novedades para descargar.');
+    return;
+  }
+  if (!window.jspdf || !window.jspdf.jsPDF || !window.jspdf.jsPDF.API.autoTable) {
+    showToast('No se pudo cargar el generador de PDF.');
+    return;
+  }
+
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' });
+
+  const rows = allTasks.map(task => [
+    task.ID || '',
+    task.ESTADO || '',
+    task.PRIORIDAD || 'Sin prioridad',
+    task.UBICACION || '',
+    task.ELEMENTO || '',
+    task.TAREA || '',
+    task.CREADO_POR || '',
+    task.ASIGNADO_A || '',
+    task.FECHA_ALTA || ''
+  ]);
+
+  doc.autoTable({
+    startY: 34,
+    head: [['ID', 'Estado', 'Prioridad', 'Ubicacion', 'Elemento', 'Tarea', 'Relevo', 'Asignado', 'Alta']],
+    body: rows,
+    margin: { top: 34, left: 10, right: 10 },
+    styles: { fontSize: 8, cellPadding: 2, overflow: 'linebreak', valign: 'top' },
+    headStyles: { fillColor: [5, 38, 58], textColor: [255, 255, 255], fontStyle: 'bold' },
+    alternateRowStyles: { fillColor: [242, 246, 248] },
+    columnStyles: {
+      0: { cellWidth: 12 },
+      1: { cellWidth: 22 },
+      2: { cellWidth: 24 },
+      3: { cellWidth: 38 },
+      4: { cellWidth: 32 },
+      5: { cellWidth: 70 },
+      6: { cellWidth: 34 },
+      7: { cellWidth: 34 },
+      8: { cellWidth: 22 }
+    },
+    didParseCell(data) {
+      if (data.section !== 'body') return;
+      const prioridad = data.row.raw[2];
+      if (prioridad === 'Alta') data.cell.styles.fillColor = [255, 241, 241];
+      if (prioridad === 'Media') data.cell.styles.fillColor = [255, 253, 227];
+      if (prioridad === 'Baja') data.cell.styles.fillColor = [237, 248, 253];
+    },
+    willDrawPage() {
+      drawBoardPdfHeader(doc);
+    }
+  });
+
+  doc.save(`Pizarra_novedades_${new Date().toISOString().slice(0, 10)}.pdf`);
+}
+
+function drawBoardPdfHeader(doc) {
+  const pageWidth = doc.internal.pageSize.getWidth();
+  doc.setFillColor(5, 38, 58);
+  doc.rect(0, 0, pageWidth, 26, 'F');
+  doc.setFillColor(220, 51, 56);
+  doc.rect(0, 24, pageWidth, 2, 'F');
+
+  try {
+    const logo = document.querySelector('.brand-logo');
+    if (logo && logo.complete) doc.addImage(logo, 'PNG', pageWidth - 28, 3, 18, 18);
+  } catch (error) {
+    console.warn('No se pudo agregar el logo al PDF.', error);
+  }
+
+  doc.setTextColor(255, 255, 255);
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(16);
+  doc.text('Pizarra de novedades', 10, 11);
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(9);
+  doc.text(`Bomberos Voluntarios Pergamino - ${new Date().toLocaleString('es-AR')}`, 10, 18);
+  doc.setTextColor(22, 35, 50);
 }
 
 function showToast(message) {

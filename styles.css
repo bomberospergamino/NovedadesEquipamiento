@@ -120,7 +120,7 @@ textarea { min-height: 76px; resize: vertical; }
 .btn.secondary { background: white; color: var(--navy); }
 .btn.ghost { background: rgba(255,255,255,.16); color: white; border: 1px solid rgba(255,255,255,.3); }
 .btn.danger { background: var(--danger); color: white; }
-.btn.small { padding: 7px 11px; font-size: 12px; }
+.btn.small { padding: 6px 9px; font-size: 11px; }
 
 .admin-panel { padding: 16px; margin-bottom: 18px; border-left: 6px solid var(--amber); }
 .panel-title-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
@@ -129,19 +129,19 @@ textarea { min-height: 76px; resize: vertical; }
 .board {
   display: grid;
   grid-template-columns: repeat(3, minmax(260px, 1fr));
-  gap: 18px;
+  gap: 12px;
   align-items: start;
 }
-.column { padding: 14px; min-height: 280px; }
-.column h2 { margin: 0 0 14px; color: var(--charcoal); }
-.task-list { display: grid; gap: 12px; }
+.column { padding: 10px; min-height: 280px; }
+.column h2 { margin: 0 0 10px; color: var(--charcoal); font-size: 18px; }
+.task-list { display: grid; gap: 8px; }
 
 .task-card {
   border: 1px solid var(--border);
   border-radius: 8px;
-  padding: 14px;
+  padding: 9px 10px;
   background: white;
-  border-left: 8px solid var(--border);
+  border-left: 6px solid var(--border);
 }
 .task-card.priority-card-alta { background: #fff1f1; border-left-color: var(--red); }
 .task-card.priority-card-media { background: #fffde3; border-left-color: var(--amber); }
@@ -149,15 +149,15 @@ textarea { min-height: 76px; resize: vertical; }
 .task-card.priority-card-sin-prioridad { background: white; border-left-color: var(--border); }
 .task-card.overdue { outline: 2px solid var(--danger); background: #ffe9e9; }
 .task-top { display: flex; justify-content: space-between; gap: 8px; align-items: flex-start; }
-.task-title { margin: 6px 0 10px; font-weight: 900; }
-.meta { display: grid; gap: 4px; color: var(--muted); font-size: 13px; }
+.task-title { margin: 4px 0 7px; font-weight: 900; font-size: 13.5px; line-height: 1.25; }
+.meta { display: grid; gap: 2px; color: var(--muted); font-size: 12px; line-height: 1.3; }
 .meta strong { color: var(--text); }
-.priority { border-radius: 999px; padding: 5px 9px; font-size: 12px; font-weight: 900; white-space: nowrap; }
+.priority { border-radius: 999px; padding: 4px 7px; font-size: 11px; font-weight: 900; white-space: nowrap; }
 .priority.alta { background: var(--red); color: white; }
 .priority.media { background: var(--amber); color: #332000; }
 .priority.baja { background: var(--cyan); color: white; }
 .priority.sin-prioridad { background: #eef3f6; color: var(--muted); }
-.actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+.actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
 .admin-edit { margin-top: 12px; padding-top: 12px; border-top: 1px dashed var(--border); display: grid; gap: 10px; }
 .admin-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
 .empty { color: var(--muted); text-align: center; padding: 18px 6px; border: 1px dashed var(--border); border-radius: 8px; }

@@ -87,6 +87,34 @@ h1 { margin: 0; font-size: clamp(28px, 4vw, 44px); }
 .summary-card span { color: var(--muted); font-size: 13px; }
 .summary-card strong { display: block; margin-top: 4px; font-size: 32px; color: var(--navy); }
 
+.public-board {
+  display: grid;
+  gap: 8px;
+}
+
+.public-card {
+  background: white;
+  border: 1px solid var(--border);
+  border-left: 6px solid var(--border);
+  border-radius: 8px;
+  box-shadow: var(--shadow);
+  min-height: 0;
+  padding: 10px 12px;
+  display: grid;
+  grid-template-columns: minmax(78px, .45fr) minmax(150px, .9fr) minmax(220px, 1.65fr);
+  align-items: center;
+  gap: 12px;
+}
+
+.public-card.priority-card-alta { background: #fff1f1; border-left-color: var(--red); }
+.public-card.priority-card-media { background: #fffde3; border-left-color: var(--amber); }
+.public-card.priority-card-baja { background: #edf8fd; border-left-color: var(--cyan); }
+.public-card.priority-card-sin-prioridad { background: white; border-left-color: var(--border); }
+.public-mobile { color: var(--navy-dark); font-size: 22px; font-weight: 950; line-height: 1; }
+.public-title { color: var(--text); font-weight: 900; line-height: 1.2; }
+.public-novelty { color: var(--muted); font-weight: 800; font-size: 14px; line-height: 1.25; }
+.public-empty { background: white; box-shadow: var(--shadow); }
+
 .toolbar {
   display: grid;
   grid-template-columns: minmax(180px, 1fr) minmax(220px, 2fr) minmax(140px, .7fr);
@@ -178,6 +206,8 @@ textarea { min-height: 76px; resize: vertical; }
 @media (max-width: 980px) {
   .summary-grid { grid-template-columns: repeat(2, 1fr); }
   .board { grid-template-columns: 1fr; }
+  .public-card { grid-template-columns: 72px 1fr; }
+  .public-novelty { grid-column: 1 / -1; }
   .toolbar { grid-template-columns: 1fr; }
   .app-header { align-items: flex-start; flex-direction: column; }
   .brand-block { align-items: flex-start; }

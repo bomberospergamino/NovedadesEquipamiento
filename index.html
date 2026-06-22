@@ -11,74 +11,81 @@
     <div class="brand-block">
       <img class="brand-logo" src="logo-sbvp.png" alt="Logo Bomberos Voluntarios Pergamino" />
       <div>
-      <p class="eyebrow">Bomberos Voluntarios Pergamino</p>
-      <h1>Novedades Equipamiento</h1>
+        <p class="eyebrow">Bomberos Voluntarios Pergamino</p>
+        <h1>Novedades Equipamiento</h1>
       </div>
     </div>
     <div class="header-actions">
+      <button id="btnEquipment" class="btn primary">Soy de equipamiento</button>
       <button id="btnBoardPdf" class="btn secondary">PDF completo</button>
       <button id="btnRefresh" class="btn secondary">Actualizar</button>
-      <button id="btnAdmin" class="btn ghost">Modo admin</button>
+      <button id="btnAdmin" class="btn ghost hidden">Modo admin</button>
     </div>
   </header>
 
   <main class="layout">
     <section class="panel config-panel" id="configPanel">
-      <h2>Configuración inicial</h2>
-      <p>Pegá la URL publicada de tu Apps Script para conectar la pizarra con la hoja <strong>PIZARRA</strong>.</p>
+      <h2>Configuracion inicial</h2>
+      <p>Pega la URL publicada de tu Apps Script para conectar la pizarra con la hoja <strong>PIZARRA</strong>.</p>
       <label for="scriptUrl">URL Apps Script</label>
       <input id="scriptUrl" type="url" placeholder="https://script.google.com/macros/s/.../exec" />
-      <button id="saveConfig" class="btn primary">Guardar conexión</button>
+      <button id="saveConfig" class="btn primary">Guardar conexion</button>
     </section>
 
-    <section class="summary-grid" id="summaryGrid">
-      <article class="summary-card"><span>Disponibles</span><strong id="countDisponible">0</strong></article>
-      <article class="summary-card"><span>Asignadas</span><strong id="countAsignada">0</strong></article>
-      <article class="summary-card"><span>Finalizadas recientes</span><strong id="countFinalizada">0</strong></article>
-      <article class="summary-card"><span>Liberadas por 5 días</span><strong id="countVencida">0</strong></article>
+    <section id="publicView" class="public-view">
+      <div class="public-board" id="listPublic"></div>
     </section>
 
-    <section class="toolbar panel">
-      <div class="field">
-        <label for="userName">Tu nombre</label>
-        <input id="userName" type="text" placeholder="Nombre y apellido" />
-      </div>
-      <div class="field">
-        <label for="filterText">Buscar</label>
-        <input id="filterText" type="search" placeholder="Ubicación, elemento o tarea" />
-      </div>
-      <div class="field">
-        <label for="filterPriority">Prioridad</label>
-        <select id="filterPriority">
-          <option value="">Todas</option>
-          <option value="Alta">Alta</option>
-          <option value="Media">Media</option>
-          <option value="Baja">Baja</option>
-        </select>
-      </div>
-    </section>
+    <section id="equipmentView" class="equipment-view hidden">
+      <section class="summary-grid" id="summaryGrid">
+        <article class="summary-card"><span>Disponibles</span><strong id="countDisponible">0</strong></article>
+        <article class="summary-card"><span>Asignadas</span><strong id="countAsignada">0</strong></article>
+        <article class="summary-card"><span>Finalizadas recientes</span><strong id="countFinalizada">0</strong></article>
+        <article class="summary-card"><span>Liberadas por 5 dias</span><strong id="countVencida">0</strong></article>
+      </section>
 
-    <section id="adminPanel" class="panel admin-panel hidden">
-      <div class="panel-title-row">
-        <h2>Panel administrador</h2>
-        <span class="pill">Edición de prioridad, tiempo y vencimiento</span>
-      </div>
-      <p>Para editar una tarea, abrí su tarjeta y completá los campos de administración.</p>
-    </section>
+      <section class="toolbar panel">
+        <div class="field">
+          <label for="userName">Tu nombre</label>
+          <input id="userName" type="text" placeholder="Nombre y apellido" />
+        </div>
+        <div class="field">
+          <label for="filterText">Buscar</label>
+          <input id="filterText" type="search" placeholder="Ubicacion, elemento o tarea" />
+        </div>
+        <div class="field">
+          <label for="filterPriority">Prioridad</label>
+          <select id="filterPriority">
+            <option value="">Todas</option>
+            <option value="Alta">Alta</option>
+            <option value="Media">Media</option>
+            <option value="Baja">Baja</option>
+          </select>
+        </div>
+      </section>
 
-    <section class="board">
-      <div class="column" data-status="Disponible">
-        <h2>Disponibles</h2>
-        <div class="task-list" id="listDisponible"></div>
-      </div>
-      <div class="column" data-status="Asignada">
-        <h2>Asignadas</h2>
-        <div class="task-list" id="listAsignada"></div>
-      </div>
-      <div class="column" data-status="Finalizada">
-        <h2>Finalizadas recientes</h2>
-        <div class="task-list" id="listFinalizada"></div>
-      </div>
+      <section id="adminPanel" class="panel admin-panel hidden">
+        <div class="panel-title-row">
+          <h2>Panel administrador</h2>
+          <span class="pill">Edicion de prioridad, tiempo y vencimiento</span>
+        </div>
+        <p>Para editar una tarea, abri su tarjeta y completa los campos de administracion.</p>
+      </section>
+
+      <section class="board">
+        <div class="column" data-status="Disponible">
+          <h2>Disponibles</h2>
+          <div class="task-list" id="listDisponible"></div>
+        </div>
+        <div class="column" data-status="Asignada">
+          <h2>Asignadas</h2>
+          <div class="task-list" id="listAsignada"></div>
+        </div>
+        <div class="column" data-status="Finalizada">
+          <h2>Finalizadas recientes</h2>
+          <div class="task-list" id="listFinalizada"></div>
+        </div>
+      </section>
     </section>
   </main>
 

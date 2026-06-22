@@ -5,19 +5,24 @@ const ADMIN_PASS = '1105';
 const DEFAULT_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbzYiO560Az_Eo_hPzAxeczftZG4h9M3SEPjm-ACtrKzfdtHj_CRiqCCenM3KkIy6vyx/exec';
 
 let allTasks = [];
-let adminMode = localStorage.getItem(ADMIN_KEY) === 'true';
+let equipmentMode = false;
+let adminMode = false;
 
 const els = {
   configPanel: document.getElementById('configPanel'),
   scriptUrl: document.getElementById('scriptUrl'),
   saveConfig: document.getElementById('saveConfig'),
+  btnEquipment: document.getElementById('btnEquipment'),
   btnBoardPdf: document.getElementById('btnBoardPdf'),
   btnRefresh: document.getElementById('btnRefresh'),
   btnAdmin: document.getElementById('btnAdmin'),
   adminPanel: document.getElementById('adminPanel'),
+  publicView: document.getElementById('publicView'),
+  equipmentView: document.getElementById('equipmentView'),
   userName: document.getElementById('userName'),
   filterText: document.getElementById('filterText'),
   filterPriority: document.getElementById('filterPriority'),
+  listPublic: document.getElementById('listPublic'),
   listDisponible: document.getElementById('listDisponible'),
   listAsignada: document.getElementById('listAsignada'),
   listFinalizada: document.getElementById('listFinalizada'),
@@ -36,12 +41,14 @@ function init() {
   els.userName.value = localStorage.getItem(USER_KEY) || '';
   els.userName.addEventListener('input', () => localStorage.setItem(USER_KEY, els.userName.value.trim()));
   els.saveConfig.addEventListener('click', saveConfig);
+  els.btnEquipment.addEventListener('click', toggleEquipmentMode);
   els.btnBoardPdf.addEventListener('click', downloadBoardPdf);
   els.btnRefresh.addEventListener('click', loadTasks);
   els.btnAdmin.addEventListener('click', toggleAdmin);
   els.filterText.addEventListener('input', render);
   els.filterPriority.addEventListener('change', render);
   updateConfigVisibility();
+  updateModeVisibility();
   updateAdminVisibility();
   if (getScriptUrl()) loadTasks();
 }
@@ -65,12 +72,32 @@ function updateConfigVisibility() {
   els.configPanel.classList.toggle('hidden', Boolean(getScriptUrl()));
 }
 
+function updateModeVisibility() {
+  els.publicView.classList.toggle('hidden', equipmentMode);
+  els.equipmentView.classList.toggle('hidden', !equipmentMode);
+  els.btnEquipment.textContent = equipmentMode ? 'Volver a pizarra' : 'Soy de equipamiento';
+}
+
 function updateAdminVisibility() {
-  els.adminPanel.classList.toggle('hidden', !adminMode);
+  els.adminPanel.classList.toggle('hidden', !equipmentMode || !adminMode);
+  els.btnAdmin.classList.toggle('hidden', !equipmentMode);
   els.btnAdmin.textContent = adminMode ? 'Salir de admin' : 'Modo admin';
 }
 
+function toggleEquipmentMode() {
+  equipmentMode = !equipmentMode;
+  if (!equipmentMode) {
+    adminMode = false;
+    localStorage.removeItem('adminPass');
+    localStorage.removeItem(ADMIN_KEY);
+  }
+  updateModeVisibility();
+  updateAdminVisibility();
+  render();
+}
+
 function toggleAdmin() {
+  if (!equipmentMode) return;
   if (adminMode) {
     adminMode = false;
     localStorage.removeItem('adminPass');
@@ -117,6 +144,11 @@ async function loadTasks() {
 }
 
 function render() {
+  if (!equipmentMode) {
+    renderPublic();
+    return;
+  }
+
   const text = els.filterText.value.trim().toLowerCase();
   const priority = els.filterPriority.value;
   const filtered = allTasks.filter(t => {
@@ -137,6 +169,16 @@ function render() {
   renderList(els.listFinalizada, finalizadas);
 }
 
+function renderPublic() {
+  const activeTasks = allTasks.filter(t => t.ESTADO !== 'Finalizada');
+  els.listPublic.innerHTML = '';
+  if (!activeTasks.length) {
+    els.listPublic.innerHTML = '<div class="empty public-empty">No hay novedades activas.</div>';
+    return;
+  }
+  activeTasks.forEach(task => els.listPublic.appendChild(createPublicCard(task)));
+}
+
 function renderList(container, tasks) {
   container.innerHTML = '';
   if (!tasks.length) {
@@ -144,6 +186,18 @@ function renderList(container, tasks) {
     return;
   }
   tasks.forEach(task => container.appendChild(createTaskCard(task)));
+}
+
+function createPublicCard(task) {
+  const card = document.createElement('article');
+  const prioridad = (task.PRIORIDAD || 'sin-prioridad').toLowerCase();
+  card.className = `public-card priority-card-${prioridad}`;
+  card.innerHTML = `
+    <div class="public-mobile">${escapeHtml(getMobileFromLocation(task.UBICACION))}</div>
+    <div class="public-title">${escapeHtml(displayText(task.ELEMENTO || 'Elemento sin nombre'))}</div>
+    <div class="public-novelty">${escapeHtml(getPublicNovelty(task))}</div>
+  `;
+  return card;
 }
 
 function createTaskCard(task) {
@@ -184,6 +238,64 @@ function createTaskCard(task) {
     actions.appendChild(button('Editar admin', 'secondary small', () => toggleAdminEdit(card, task)));
   }
   return card;
+}
+
+function getMobileFromLocation(location) {
+  const value = String(location || '').trim();
+  if (!value) return 'Sin movil';
+  return value.split(/\s+-\s+/)[0] || value;
+}
+
+function getPlaceFromLocation(location) {
+  const value = String(location || '').trim();
+  const parts = value.split(/\s+-\s+/);
+  return parts.length > 1 ? parts.slice(1).join(' - ') : value;
+}
+
+function getPublicNovelty(task) {
+  const tarea = displayText(task.TAREA || task.OBSERVACIONES || 'Revisar novedad');
+  return tarea
+    .replace(/\bCondicion\b/gi, 'Condición')
+    .replace(/\bMas\b/g, 'Más')
+    .replace(/\bmas\b/g, 'más');
+}
+
+function displayText(value) {
+  return String(value || '')
+    .replace(/Ã¡/g, 'á')
+    .replace(/Ã©/g, 'é')
+    .replace(/Ã­/g, 'í')
+    .replace(/Ã³/g, 'ó')
+    .replace(/Ãº/g, 'ú')
+    .replace(/Ã±/g, 'ñ')
+    .replace(/Ã/g, 'Á')
+    .replace(/Ã‰/g, 'É')
+    .replace(/Ã/g, 'Í')
+    .replace(/Ã“/g, 'Ó')
+    .replace(/Ãš/g, 'Ú')
+    .replace(/Ã‘/g, 'Ñ');
+}
+
+function getPublicNovelty(task) {
+  const tarea = displayText(task.TAREA || task.OBSERVACIONES || 'Revisar novedad');
+  return tarea
+    .replace(/\bCondicion\b/gi, 'Condici\u00f3n')
+    .replace(/\bMas\b/g, 'M\u00e1s')
+    .replace(/\bmas\b/g, 'm\u00e1s');
+}
+
+function displayText(value) {
+  let text = String(value || '');
+  for (let i = 0; i < 2; i += 1) {
+    try {
+      const decoded = decodeURIComponent(escape(text));
+      if (decoded === text) break;
+      text = decoded;
+    } catch (error) {
+      break;
+    }
+  }
+  return text;
 }
 
 function button(text, className, onClick) {

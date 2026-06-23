@@ -16,10 +16,9 @@
       </div>
     </div>
     <div class="header-actions">
-      <button id="btnEquipment" class="btn primary">Soy de equipamiento</button>
       <button id="btnBoardPdf" class="btn secondary">PDF completo</button>
       <button id="btnRefresh" class="btn secondary">Actualizar</button>
-      <button id="btnAdmin" class="btn ghost hidden">Modo admin</button>
+      <button id="btnAdmin" class="btn ghost">Modo admin</button>
     </div>
   </header>
 
@@ -36,22 +35,26 @@
       <div class="public-board" id="listPublic"></div>
     </section>
 
-    <section id="equipmentView" class="equipment-view hidden">
-      <section class="summary-grid" id="summaryGrid">
+    <section id="adminView" class="admin-view hidden">
+      <section class="summary-grid">
         <article class="summary-card"><span>Disponibles</span><strong id="countDisponible">0</strong></article>
-        <article class="summary-card"><span>Asignadas</span><strong id="countAsignada">0</strong></article>
-        <article class="summary-card"><span>Finalizadas recientes</span><strong id="countFinalizada">0</strong></article>
-        <article class="summary-card"><span>Liberadas por 5 dias</span><strong id="countVencida">0</strong></article>
+        <article class="summary-card"><span>Finalizadas</span><strong id="countFinalizada">0</strong></article>
+        <article class="summary-card"><span>Controladas visibles</span><strong id="countControlada">0</strong></article>
       </section>
 
       <section class="toolbar panel">
         <div class="field">
-          <label for="userName">Tu nombre</label>
-          <input id="userName" type="text" placeholder="Nombre y apellido" />
+          <label for="filterText">Buscar</label>
+          <input id="filterText" type="search" placeholder="Movil, elemento, novedad o persona" />
         </div>
         <div class="field">
-          <label for="filterText">Buscar</label>
-          <input id="filterText" type="search" placeholder="Ubicacion, elemento o tarea" />
+          <label for="filterStatus">Estado</label>
+          <select id="filterStatus">
+            <option value="">Todos</option>
+            <option value="Disponible">Disponible</option>
+            <option value="Finalizada">Finalizada</option>
+            <option value="Controlada">Controlada</option>
+          </select>
         </div>
         <div class="field">
           <label for="filterPriority">Prioridad</label>
@@ -64,12 +67,11 @@
         </div>
       </section>
 
-      <section id="adminPanel" class="panel admin-panel hidden">
+      <section id="adminPanel" class="panel admin-panel">
         <div class="panel-title-row">
           <h2>Panel administrador</h2>
-          <span class="pill">Edicion de prioridad, tiempo y vencimiento</span>
+          <span class="pill">Clave 1105 activa</span>
         </div>
-        <p>Para editar una tarea, abri su tarjeta y completa los campos de administracion.</p>
       </section>
 
       <section class="board">
@@ -77,17 +79,43 @@
           <h2>Disponibles</h2>
           <div class="task-list" id="listDisponible"></div>
         </div>
-        <div class="column" data-status="Asignada">
-          <h2>Asignadas</h2>
-          <div class="task-list" id="listAsignada"></div>
-        </div>
         <div class="column" data-status="Finalizada">
-          <h2>Finalizadas recientes</h2>
+          <h2>Finalizadas</h2>
           <div class="task-list" id="listFinalizada"></div>
+        </div>
+        <div class="column" data-status="Controlada">
+          <h2>Controladas</h2>
+          <div class="task-list" id="listControlada"></div>
         </div>
       </section>
     </section>
   </main>
+
+  <div id="taskModal" class="modal hidden" role="dialog" aria-modal="true">
+    <div class="modal-card">
+      <div class="modal-head">
+        <div>
+          <p class="eyebrow modal-eyebrow" id="modalMobile"></p>
+          <h2 id="modalTitle">Novedad</h2>
+        </div>
+        <button id="modalClose" class="icon-btn" type="button" aria-label="Cerrar">x</button>
+      </div>
+      <div class="modal-detail" id="modalDetail"></div>
+      <div class="field">
+        <label for="modalUser">Quien la realiza</label>
+        <input id="modalUser" type="text" list="responsablesList" placeholder="Nombre y apellido" />
+        <datalist id="responsablesList"></datalist>
+      </div>
+      <div class="field">
+        <label for="modalObs">Observacion final</label>
+        <textarea id="modalObs" placeholder="Opcional"></textarea>
+      </div>
+      <div class="modal-actions">
+        <button id="modalCancel" class="btn secondary" type="button">Cancelar</button>
+        <button id="modalFinish" class="btn primary" type="button">Marcar finalizada</button>
+      </div>
+    </div>
+  </div>
 
   <div id="toast" class="toast hidden"></div>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>

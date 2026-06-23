@@ -9,8 +9,7 @@ const RESPONSABLES_SPREADSHEET_ID = '1nTBEnVuyXHPMJsMrnfdfcbKUFIFLKED3Z4oalQYRH1
 const PIZARRA_SHEET_NAME = 'PIZARRA';
 const INTERNAL_SHEETS = ['AGENDA', 'REGISTROS', 'NOVEDADES', 'PIZARRA', 'PIZZARRA'];
 const ADMIN_PASS = '1105';
-const FINALIZADAS_VISIBLES_DIAS = 7;
-const DIAS_PARA_LIBERAR_ASIGNADA = 5;
+const CONTROLADAS_VISIBLES_DIAS = 8;
 const PIZARRA_HEADERS = [
   'ID',
   'FECHA_ALTA',
@@ -29,7 +28,10 @@ const PIZARRA_HEADERS = [
   'FOTOS',
   'CREADO_POR',
   'ULTIMA_ACTUALIZACION',
-  'ULTIMO_ASIGNADO'
+  'ULTIMO_ASIGNADO',
+  'FINALIZADO_POR',
+  'FECHA_CONTROL',
+  'CONTROLADO_POR'
 ];
 
 /*************** WEB APP UNIFICADA ***************/
@@ -44,6 +46,7 @@ function doGet(e) {
     if (action === 'list') return jsonResponse(listTasks_());
     if (action === 'assign') return jsonResponse(assignTask_(params));
     if (action === 'finish') return jsonResponse(finishTask_(params));
+    if (action === 'control') return jsonResponse(controlTask_(params));
     if (action === 'adminUpdate') return jsonResponse(adminUpdate_(params));
     if (action === 'createFromNovedad') return jsonResponse(createTaskFromNovedad_(params));
 
@@ -337,7 +340,16 @@ function getPizarraSheet_() {
     sh.appendRow(PIZARRA_HEADERS);
   }
   if (sh.getLastRow() === 0) sh.appendRow(PIZARRA_HEADERS);
+  ensurePizarraHeaders_(sh);
   return sh;
+}
+
+function ensurePizarraHeaders_(sh) {
+  const lastCol = Math.max(sh.getLastColumn(), 1);
+  const headers = sh.getRange(1, 1, 1, lastCol).getValues()[0].map(String);
+  const missing = PIZARRA_HEADERS.filter(header => !headers.includes(header));
+  if (!missing.length) return;
+  sh.getRange(1, headers.length + 1, 1, missing.length).setValues([missing]);
 }
 
 function getPizarraData_() {
@@ -355,18 +367,18 @@ function getPizarraData_() {
 }
 
 function listTasks_() {
-  const releasedExpired = releaseExpired_();
+  const legacyAssigned = normalizeLegacyAssigned_();
   const { items } = getPizarraData_();
 
   const visible = items.filter(item => {
     const estado = String(item.ESTADO || '').trim();
-    if (estado === 'Finalizada') {
-      return daysSince_(item.FECHA_FINALIZACION) <= FINALIZADAS_VISIBLES_DIAS;
+    if (estado === 'Controlada') {
+      return daysSince_(item.FECHA_CONTROL) <= CONTROLADAS_VISIBLES_DIAS;
     }
     return true;
   }).map(item => normalizeForClient_(item));
 
-  return { ok: true, tasks: visible, releasedExpired };
+  return { ok: true, tasks: visible, legacyAssigned };
 }
 
 function normalizeForClient_(item) {
@@ -384,11 +396,10 @@ function normalizeForClient_(item) {
 }
 
 function shouldReleaseAssigned_(item) {
-  if (String(item.ESTADO).trim() !== 'Asignada') return false;
-  return daysSince_(item.FECHA_ASIGNACION) >= DIAS_PARA_LIBERAR_ASIGNADA;
+  return String(item.ESTADO).trim() === 'Asignada';
 }
 
-function releaseExpired_() {
+function normalizeLegacyAssigned_() {
   const { sh, headers, items } = getPizarraData_();
   const cEstado = colIndex_(headers, 'ESTADO');
   const cAsignado = colIndex_(headers, 'ASIGNADO_A');
@@ -402,7 +413,7 @@ function releaseExpired_() {
     if (shouldReleaseAssigned_(item)) {
       const anterior = item.ASIGNADO_A || '';
       const obsActual = item.OBSERVACIONES || '';
-      const obsNueva = String(obsActual) + (obsActual ? '\n' : '') + 'Tarea sin finalizar por ' + DIAS_PARA_LIBERAR_ASIGNADA + ' dias desde la asignacion. Liberada automaticamente el ' + formatDate_(now_()) + '.';
+      const obsNueva = String(obsActual) + (obsActual ? '\n' : '') + 'Asignacion anterior removida por cambio de flujo el ' + formatDate_(now_()) + '.';
       sh.getRange(item._row, cEstado).setValue('Disponible');
       sh.getRange(item._row, cUltimo).setValue(anterior);
       sh.getRange(item._row, cAsignado).setValue('');
@@ -423,30 +434,42 @@ function findPizarraById_(id) {
 }
 
 function assignTask_(params) {
-  const user = String(params.user || '').trim();
-  if (!user) throw new Error('Falta el nombre de quien toma la tarea.');
-  const { sh, headers, item } = findPizarraById_(params.id);
-  if (String(item.ESTADO).trim() !== 'Disponible') {
-    throw new Error('La tarea no esta disponible.');
-  }
-  sh.getRange(item._row, colIndex_(headers, 'ESTADO')).setValue('Asignada');
-  sh.getRange(item._row, colIndex_(headers, 'ASIGNADO_A')).setValue(user);
-  sh.getRange(item._row, colIndex_(headers, 'FECHA_ASIGNACION')).setValue(formatDate_(now_()));
-  sh.getRange(item._row, colIndex_(headers, 'ULTIMA_ACTUALIZACION')).setValue(formatDate_(now_()));
-  return { ok: true, message: 'Tarea asignada.' };
+  throw new Error('El flujo de asignacion fue reemplazado por finalizacion directa.');
 }
 
 function finishTask_(params) {
   const { sh, headers, item } = findPizarraById_(params.id);
+  const user = String(params.user || '').trim();
+  if (!user) throw new Error('Falta el nombre de quien realiza la tarea.');
+  if (String(item.ESTADO || '').trim() !== 'Disponible') {
+    throw new Error('La novedad no esta disponible para finalizar.');
+  }
   const obsCierre = String(params.observaciones || '').trim();
   const obsActual = item.OBSERVACIONES || '';
-  const obsNueva = obsCierre ? String(obsActual) + (obsActual ? '\n' : '') + 'Cierre: ' + obsCierre : obsActual;
+  const obsNueva = obsCierre ? String(obsActual) + (obsActual ? '\n' : '') + 'Cierre (' + user + '): ' + obsCierre : obsActual;
 
   sh.getRange(item._row, colIndex_(headers, 'ESTADO')).setValue('Finalizada');
+  sh.getRange(item._row, colIndex_(headers, 'ASIGNADO_A')).setValue(user);
+  sh.getRange(item._row, colIndex_(headers, 'FINALIZADO_POR')).setValue(user);
   sh.getRange(item._row, colIndex_(headers, 'FECHA_FINALIZACION')).setValue(formatDate_(now_()));
   sh.getRange(item._row, colIndex_(headers, 'OBSERVACIONES')).setValue(obsNueva);
   sh.getRange(item._row, colIndex_(headers, 'ULTIMA_ACTUALIZACION')).setValue(formatDate_(now_()));
   return { ok: true, message: 'Tarea finalizada.' };
+}
+
+function controlTask_(params) {
+  if (String(params.adminPass || '') !== ADMIN_PASS) throw new Error('Clave de administrador incorrecta.');
+  const user = String(params.user || '').trim();
+  if (!user) throw new Error('Falta el nombre de quien controla.');
+  const { sh, headers, item } = findPizarraById_(params.id);
+  if (String(item.ESTADO || '').trim() !== 'Finalizada') {
+    throw new Error('Solo se pueden controlar novedades finalizadas.');
+  }
+  sh.getRange(item._row, colIndex_(headers, 'ESTADO')).setValue('Controlada');
+  sh.getRange(item._row, colIndex_(headers, 'FECHA_CONTROL')).setValue(formatDate_(now_()));
+  sh.getRange(item._row, colIndex_(headers, 'CONTROLADO_POR')).setValue(user);
+  sh.getRange(item._row, colIndex_(headers, 'ULTIMA_ACTUALIZACION')).setValue(formatDate_(now_()));
+  return { ok: true, message: 'Novedad controlada.' };
 }
 
 function adminUpdate_(params) {

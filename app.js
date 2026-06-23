@@ -5,31 +5,40 @@ const ADMIN_PASS = '1105';
 const DEFAULT_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbzYiO560Az_Eo_hPzAxeczftZG4h9M3SEPjm-ACtrKzfdtHj_CRiqCCenM3KkIy6vyx/exec';
 
 let allTasks = [];
-let equipmentMode = false;
+let responsables = [];
 let adminMode = false;
+let selectedTask = null;
 
 const els = {
   configPanel: document.getElementById('configPanel'),
   scriptUrl: document.getElementById('scriptUrl'),
   saveConfig: document.getElementById('saveConfig'),
-  btnEquipment: document.getElementById('btnEquipment'),
   btnBoardPdf: document.getElementById('btnBoardPdf'),
   btnRefresh: document.getElementById('btnRefresh'),
   btnAdmin: document.getElementById('btnAdmin'),
-  adminPanel: document.getElementById('adminPanel'),
   publicView: document.getElementById('publicView'),
-  equipmentView: document.getElementById('equipmentView'),
-  userName: document.getElementById('userName'),
+  adminView: document.getElementById('adminView'),
+  adminPanel: document.getElementById('adminPanel'),
   filterText: document.getElementById('filterText'),
+  filterStatus: document.getElementById('filterStatus'),
   filterPriority: document.getElementById('filterPriority'),
   listPublic: document.getElementById('listPublic'),
   listDisponible: document.getElementById('listDisponible'),
-  listAsignada: document.getElementById('listAsignada'),
   listFinalizada: document.getElementById('listFinalizada'),
+  listControlada: document.getElementById('listControlada'),
   countDisponible: document.getElementById('countDisponible'),
-  countAsignada: document.getElementById('countAsignada'),
   countFinalizada: document.getElementById('countFinalizada'),
-  countVencida: document.getElementById('countVencida'),
+  countControlada: document.getElementById('countControlada'),
+  taskModal: document.getElementById('taskModal'),
+  modalMobile: document.getElementById('modalMobile'),
+  modalTitle: document.getElementById('modalTitle'),
+  modalDetail: document.getElementById('modalDetail'),
+  modalUser: document.getElementById('modalUser'),
+  modalObs: document.getElementById('modalObs'),
+  modalClose: document.getElementById('modalClose'),
+  modalCancel: document.getElementById('modalCancel'),
+  modalFinish: document.getElementById('modalFinish'),
+  responsablesList: document.getElementById('responsablesList'),
   toast: document.getElementById('toast'),
 };
 
@@ -38,19 +47,23 @@ init();
 function init() {
   if (!localStorage.getItem(CONFIG_KEY)) localStorage.setItem(CONFIG_KEY, DEFAULT_SCRIPT_URL);
   els.scriptUrl.value = getScriptUrl();
-  els.userName.value = localStorage.getItem(USER_KEY) || '';
-  els.userName.addEventListener('input', () => localStorage.setItem(USER_KEY, els.userName.value.trim()));
+  els.modalUser.value = localStorage.getItem(USER_KEY) || '';
   els.saveConfig.addEventListener('click', saveConfig);
-  els.btnEquipment.addEventListener('click', toggleEquipmentMode);
   els.btnBoardPdf.addEventListener('click', downloadBoardPdf);
-  els.btnRefresh.addEventListener('click', loadTasks);
+  els.btnRefresh.addEventListener('click', loadInitialData);
   els.btnAdmin.addEventListener('click', toggleAdmin);
   els.filterText.addEventListener('input', render);
+  els.filterStatus.addEventListener('change', render);
   els.filterPriority.addEventListener('change', render);
+  els.modalClose.addEventListener('click', closeTaskModal);
+  els.modalCancel.addEventListener('click', closeTaskModal);
+  els.modalFinish.addEventListener('click', finishSelectedTask);
+  els.taskModal.addEventListener('click', event => {
+    if (event.target === els.taskModal) closeTaskModal();
+  });
   updateConfigVisibility();
-  updateModeVisibility();
   updateAdminVisibility();
-  if (getScriptUrl()) loadTasks();
+  if (getScriptUrl()) loadInitialData();
 }
 
 function getScriptUrl() {
@@ -60,44 +73,25 @@ function getScriptUrl() {
 function saveConfig() {
   const url = els.scriptUrl.value.trim();
   if (!url.startsWith('https://script.google.com/')) {
-    showToast('Pegá una URL válida de Apps Script.');
+    showToast('Pega una URL valida de Apps Script.');
     return;
   }
   localStorage.setItem(CONFIG_KEY, url);
   updateConfigVisibility();
-  loadTasks();
+  loadInitialData();
 }
 
 function updateConfigVisibility() {
   els.configPanel.classList.toggle('hidden', Boolean(getScriptUrl()));
 }
 
-function updateModeVisibility() {
-  els.publicView.classList.toggle('hidden', equipmentMode);
-  els.equipmentView.classList.toggle('hidden', !equipmentMode);
-  els.btnEquipment.textContent = equipmentMode ? 'Volver a pizarra' : 'Soy de equipamiento';
-}
-
 function updateAdminVisibility() {
-  els.adminPanel.classList.toggle('hidden', !equipmentMode || !adminMode);
-  els.btnAdmin.classList.toggle('hidden', !equipmentMode);
+  els.publicView.classList.toggle('hidden', adminMode);
+  els.adminView.classList.toggle('hidden', !adminMode);
   els.btnAdmin.textContent = adminMode ? 'Salir de admin' : 'Modo admin';
 }
 
-function toggleEquipmentMode() {
-  equipmentMode = !equipmentMode;
-  if (!equipmentMode) {
-    adminMode = false;
-    localStorage.removeItem('adminPass');
-    localStorage.removeItem(ADMIN_KEY);
-  }
-  updateModeVisibility();
-  updateAdminVisibility();
-  render();
-}
-
 function toggleAdmin() {
-  if (!equipmentMode) return;
   if (adminMode) {
     adminMode = false;
     localStorage.removeItem('adminPass');
@@ -126,8 +120,24 @@ async function api(action, params = {}) {
   });
   const response = await fetch(url.toString());
   const data = await response.json();
-  if (!data.ok) throw new Error(data.message || 'Error en la operación.');
+  if (!data.ok) throw new Error(data.message || 'Error en la operacion.');
   return data;
+}
+
+async function loadInitialData() {
+  await Promise.all([loadResponsables(), loadTasks()]);
+}
+
+async function loadResponsables() {
+  try {
+    const data = await api('config');
+    responsables = data.responsables || [];
+    els.responsablesList.innerHTML = responsables
+      .map(name => `<option value="${escapeAttr(name)}"></option>`)
+      .join('');
+  } catch (error) {
+    responsables = [];
+  }
 }
 
 async function loadTasks() {
@@ -135,7 +145,6 @@ async function loadTasks() {
     showToast('Actualizando pizarra...');
     const data = await api('list');
     allTasks = data.tasks || [];
-    els.countVencida.textContent = data.releasedExpired || 0;
     render();
     showToast('Pizarra actualizada.');
   } catch (error) {
@@ -144,190 +153,174 @@ async function loadTasks() {
 }
 
 function render() {
-  if (!equipmentMode) {
+  if (adminMode) {
+    renderAdmin();
+  } else {
     renderPublic();
-    return;
   }
-
-  const text = els.filterText.value.trim().toLowerCase();
-  const priority = els.filterPriority.value;
-  const filtered = allTasks.filter(t => {
-    const blob = `${t.ID} ${t.UBICACION} ${t.ELEMENTO} ${t.TAREA} ${t.ASIGNADO_A} ${t.CREADO_POR}`.toLowerCase();
-    return (!text || blob.includes(text)) && (!priority || t.PRIORIDAD === priority);
-  });
-
-  const disponibles = filtered.filter(t => t.ESTADO === 'Disponible');
-  const asignadas = filtered.filter(t => t.ESTADO === 'Asignada');
-  const finalizadas = filtered.filter(t => t.ESTADO === 'Finalizada');
-
-  els.countDisponible.textContent = disponibles.length;
-  els.countAsignada.textContent = asignadas.length;
-  els.countFinalizada.textContent = finalizadas.length;
-
-  renderList(els.listDisponible, disponibles);
-  renderList(els.listAsignada, asignadas);
-  renderList(els.listFinalizada, finalizadas);
 }
 
 function renderPublic() {
-  const activeTasks = allTasks.filter(t => t.ESTADO !== 'Finalizada');
+  const disponibles = allTasks.filter(task => task.ESTADO === 'Disponible');
   els.listPublic.innerHTML = '';
-  if (!activeTasks.length) {
-    els.listPublic.innerHTML = '<div class="empty public-empty">No hay novedades activas.</div>';
+  if (!disponibles.length) {
+    els.listPublic.innerHTML = '<div class="empty public-empty">No hay novedades disponibles.</div>';
     return;
   }
-  activeTasks.forEach(task => els.listPublic.appendChild(createPublicCard(task)));
+  disponibles.forEach(task => els.listPublic.appendChild(createPublicCard(task)));
+}
+
+function renderAdmin() {
+  const text = els.filterText.value.trim().toLowerCase();
+  const status = els.filterStatus.value;
+  const priority = els.filterPriority.value;
+  const filtered = allTasks.filter(task => {
+    const blob = [
+      task.ID,
+      task.UBICACION,
+      task.ELEMENTO,
+      task.TAREA,
+      task.CREADO_POR,
+      task.FINALIZADO_POR,
+      task.CONTROLADO_POR,
+      task.OBSERVACIONES
+    ].join(' ').toLowerCase();
+    return (!text || blob.includes(text))
+      && (!status || task.ESTADO === status)
+      && (!priority || task.PRIORIDAD === priority);
+  });
+
+  const disponibles = filtered.filter(task => task.ESTADO === 'Disponible');
+  const finalizadas = filtered.filter(task => task.ESTADO === 'Finalizada');
+  const controladas = filtered.filter(task => task.ESTADO === 'Controlada');
+
+  els.countDisponible.textContent = disponibles.length;
+  els.countFinalizada.textContent = finalizadas.length;
+  els.countControlada.textContent = controladas.length;
+
+  renderList(els.listDisponible, disponibles);
+  renderList(els.listFinalizada, finalizadas);
+  renderList(els.listControlada, controladas);
 }
 
 function renderList(container, tasks) {
   container.innerHTML = '';
   if (!tasks.length) {
-    container.innerHTML = '<div class="empty">Sin tareas para mostrar.</div>';
+    container.innerHTML = '<div class="empty">Sin novedades para mostrar.</div>';
     return;
   }
-  tasks.forEach(task => container.appendChild(createTaskCard(task)));
+  tasks.forEach(task => container.appendChild(createAdminCard(task)));
 }
 
 function createPublicCard(task) {
   const card = document.createElement('article');
   const prioridad = (task.PRIORIDAD || 'sin-prioridad').toLowerCase();
   card.className = `public-card priority-card-${prioridad}`;
+  card.tabIndex = 0;
   card.innerHTML = `
     <div class="public-mobile">${escapeHtml(getMobileFromLocation(task.UBICACION))}</div>
     <div class="public-title">${escapeHtml(displayText(task.ELEMENTO || 'Elemento sin nombre'))}</div>
     <div class="public-novelty">${escapeHtml(getPublicNovelty(task))}</div>
   `;
+  card.addEventListener('click', () => openTaskModal(task));
+  card.addEventListener('keydown', event => {
+    if (event.key === 'Enter' || event.key === ' ') {
+      event.preventDefault();
+      openTaskModal(task);
+    }
+  });
   return card;
 }
 
-function createTaskCard(task) {
+function createAdminCard(task) {
   const card = document.createElement('article');
   const prioridad = (task.PRIORIDAD || 'sin-prioridad').toLowerCase();
   const prioridadLabel = task.PRIORIDAD || 'Sin prioridad';
-  const adminMeta = adminMode ? `
-      <span><strong>Vencimiento:</strong> ${escapeHtml(task.FECHA_VENCIMIENTO || '-')}</span>
-      <span><strong>Estado:</strong> ${escapeHtml(task.ESTADO || '-')}</span>
-      ${task.FECHA_ASIGNACION ? `<span><strong>Asignada desde:</strong> ${escapeHtml(task.FECHA_ASIGNACION)}</span>` : ''}
-    ` : '';
-  card.className = `task-card priority-card-${prioridad} ${task.VENCIDA ? 'overdue' : ''}`;
+  card.className = `task-card priority-card-${prioridad}`;
   card.innerHTML = `
     <div class="task-top">
       <div><strong>#${escapeHtml(task.ID)}</strong></div>
       <span class="priority ${prioridad}">${escapeHtml(prioridadLabel)}</span>
     </div>
-    <div class="task-title">${escapeHtml(task.TAREA || 'Sin descripción')}</div>
+    <div class="task-title">${escapeHtml(getPublicNovelty(task))}</div>
     <div class="meta">
-      <span><strong>Ubicación:</strong> ${escapeHtml(task.UBICACION || '-')}</span>
-      <span><strong>Elemento:</strong> ${escapeHtml(task.ELEMENTO || '-')}</span>
-      ${task.CREADO_POR ? `<span><strong>Relevo:</strong> ${escapeHtml(task.CREADO_POR)}</span>` : ''}
-      ${task.ASIGNADO_A ? `<span><strong>Asignado a:</strong> ${escapeHtml(task.ASIGNADO_A)}</span>` : ''}
-      ${adminMeta}
-      ${task.OBSERVACIONES ? `<span><strong>Obs:</strong> ${escapeHtml(task.OBSERVACIONES)}</span>` : ''}
+      <span><strong>Movil:</strong> ${escapeHtml(getMobileFromLocation(task.UBICACION))}</span>
+      <span><strong>Ubicacion:</strong> ${escapeHtml(getPlaceFromLocation(task.UBICACION))}</span>
+      <span><strong>Elemento:</strong> ${escapeHtml(displayText(task.ELEMENTO || '-'))}</span>
+      <span><strong>Estado:</strong> ${escapeHtml(task.ESTADO || '-')}</span>
+      <span><strong>Alta:</strong> ${escapeHtml(task.FECHA_ALTA || '-')}</span>
+      ${task.CREADO_POR ? `<span><strong>Relevo:</strong> ${escapeHtml(displayText(task.CREADO_POR))}</span>` : ''}
+      ${task.FINALIZADO_POR ? `<span><strong>Finalizo:</strong> ${escapeHtml(displayText(task.FINALIZADO_POR))}</span>` : ''}
+      ${task.FECHA_FINALIZACION ? `<span><strong>Fecha finalizacion:</strong> ${escapeHtml(task.FECHA_FINALIZACION)}</span>` : ''}
+      ${task.CONTROLADO_POR ? `<span><strong>Controlo:</strong> ${escapeHtml(displayText(task.CONTROLADO_POR))}</span>` : ''}
+      ${task.FECHA_CONTROL ? `<span><strong>Fecha control:</strong> ${escapeHtml(task.FECHA_CONTROL)}</span>` : ''}
+      ${task.OBSERVACIONES ? `<span><strong>Obs:</strong> ${escapeHtml(displayText(task.OBSERVACIONES))}</span>` : ''}
     </div>
     <div class="actions"></div>
   `;
 
   const actions = card.querySelector('.actions');
   if (task.ESTADO === 'Disponible') {
-    actions.appendChild(button('Tomar tarea', 'primary small', () => assignTask(task.ID)));
+    actions.appendChild(button('Finalizar ahora', 'primary small', () => openTaskModal(task)));
   }
-  if (task.ESTADO === 'Asignada') {
-    actions.appendChild(button('Finalizar', 'primary small', () => finishTask(task.ID)));
+  if (task.ESTADO === 'Finalizada') {
+    actions.appendChild(button('Marcar controlada', 'primary small', () => controlTask(task.ID)));
   }
-  if (adminMode) {
-    actions.appendChild(button('Editar admin', 'secondary small', () => toggleAdminEdit(card, task)));
-  }
+  actions.appendChild(button('Editar admin', 'secondary small', () => toggleAdminEdit(card, task)));
   return card;
 }
 
-function getMobileFromLocation(location) {
-  const value = String(location || '').trim();
-  if (!value) return 'Sin movil';
-  return value.split(/\s+-\s+/)[0] || value;
+function openTaskModal(task) {
+  selectedTask = task;
+  els.modalMobile.textContent = getMobileFromLocation(task.UBICACION);
+  els.modalTitle.textContent = displayText(task.ELEMENTO || 'Novedad');
+  els.modalDetail.innerHTML = `
+    <div><strong>Novedad:</strong> ${escapeHtml(getPublicNovelty(task))}</div>
+    <div><strong>Ubicacion:</strong> ${escapeHtml(getPlaceFromLocation(task.UBICACION))}</div>
+    ${task.CREADO_POR ? `<div><strong>Relevo:</strong> ${escapeHtml(displayText(task.CREADO_POR))}</div>` : ''}
+    ${task.OBSERVACIONES ? `<div><strong>Observaciones:</strong> ${escapeHtml(displayText(task.OBSERVACIONES))}</div>` : ''}
+    ${task.FOTOS ? `<div><a href="${escapeAttr(task.FOTOS)}" target="_blank" rel="noreferrer">Ver PDF del control</a></div>` : ''}
+  `;
+  els.modalUser.value = localStorage.getItem(USER_KEY) || '';
+  els.modalObs.value = '';
+  els.taskModal.classList.remove('hidden');
+  setTimeout(() => els.modalUser.focus(), 0);
 }
 
-function getPlaceFromLocation(location) {
-  const value = String(location || '').trim();
-  const parts = value.split(/\s+-\s+/);
-  return parts.length > 1 ? parts.slice(1).join(' - ') : value;
+function closeTaskModal() {
+  selectedTask = null;
+  els.taskModal.classList.add('hidden');
 }
 
-function getPublicNovelty(task) {
-  const tarea = displayText(task.TAREA || task.OBSERVACIONES || 'Revisar novedad');
-  return tarea
-    .replace(/\bCondicion\b/gi, 'Condición')
-    .replace(/\bMas\b/g, 'Más')
-    .replace(/\bmas\b/g, 'más');
-}
-
-function displayText(value) {
-  return String(value || '')
-    .replace(/Ã¡/g, 'á')
-    .replace(/Ã©/g, 'é')
-    .replace(/Ã­/g, 'í')
-    .replace(/Ã³/g, 'ó')
-    .replace(/Ãº/g, 'ú')
-    .replace(/Ã±/g, 'ñ')
-    .replace(/Ã/g, 'Á')
-    .replace(/Ã‰/g, 'É')
-    .replace(/Ã/g, 'Í')
-    .replace(/Ã“/g, 'Ó')
-    .replace(/Ãš/g, 'Ú')
-    .replace(/Ã‘/g, 'Ñ');
-}
-
-function getPublicNovelty(task) {
-  const tarea = displayText(task.TAREA || task.OBSERVACIONES || 'Revisar novedad');
-  return tarea
-    .replace(/\bCondicion\b/gi, 'Condici\u00f3n')
-    .replace(/\bMas\b/g, 'M\u00e1s')
-    .replace(/\bmas\b/g, 'm\u00e1s');
-}
-
-function displayText(value) {
-  let text = String(value || '');
-  for (let i = 0; i < 2; i += 1) {
-    try {
-      const decoded = decodeURIComponent(escape(text));
-      if (decoded === text) break;
-      text = decoded;
-    } catch (error) {
-      break;
-    }
-  }
-  return text;
-}
-
-function button(text, className, onClick) {
-  const btn = document.createElement('button');
-  btn.className = `btn ${className}`;
-  btn.textContent = text;
-  btn.addEventListener('click', onClick);
-  return btn;
-}
-
-async function assignTask(id) {
-  const name = els.userName.value.trim();
-  if (!name) {
-    showToast('Completá tu nombre antes de tomar una tarea.');
-    els.userName.focus();
+async function finishSelectedTask() {
+  if (!selectedTask) return;
+  const user = els.modalUser.value.trim();
+  if (!user) {
+    showToast('Completa quien realiza la tarea.');
+    els.modalUser.focus();
     return;
   }
   try {
-    await api('assign', { id, user: name });
-    showToast('Tarea asignada.');
+    localStorage.setItem(USER_KEY, user);
+    await api('finish', { id: selectedTask.ID, user, observaciones: els.modalObs.value.trim() });
+    showToast('Novedad finalizada.');
+    closeTaskModal();
     await loadTasks();
   } catch (error) {
     showToast(error.message);
   }
 }
 
-async function finishTask(id) {
-  const name = els.userName.value.trim();
-  const obs = prompt('Observación de cierre, opcional:') || '';
+async function controlTask(id) {
+  const user = prompt('Quien controla esta novedad?') || '';
+  if (!user.trim()) return;
   try {
-    await api('finish', { id, user: name, observaciones: obs });
-    showToast('Tarea finalizada.');
+    await api('control', {
+      id,
+      user: user.trim(),
+      adminPass: localStorage.getItem('adminPass') || ''
+    });
+    showToast('Novedad controlada.');
     await loadTasks();
   } catch (error) {
     showToast(error.message);
@@ -342,7 +335,7 @@ function toggleAdminEdit(card, task) {
   box.innerHTML = `
     <div class="admin-grid">
       <div class="field"><label>Prioridad</label><select class="adm-priority"><option value="">Sin prioridad</option><option>Baja</option><option>Media</option><option>Alta</option></select></div>
-      <div class="field"><label>Tiempo estimado días</label><input class="adm-days" type="number" min="0" step="1" value="${escapeAttr(task.TIEMPO_ESTIMADO_DIAS || '')}"></div>
+      <div class="field"><label>Tiempo estimado dias</label><input class="adm-days" type="number" min="0" step="1" value="${escapeAttr(task.TIEMPO_ESTIMADO_DIAS || '')}"></div>
     </div>
     <div class="field"><label>Fecha vencimiento</label><input class="adm-due" type="date" value="${toDateInput(task.FECHA_VENCIMIENTO)}"></div>
     <div class="field"><label>Observaciones</label><textarea class="adm-obs">${escapeHtml(task.OBSERVACIONES || '')}</textarea></div>
@@ -370,6 +363,48 @@ async function saveAdminEdit(id, box) {
   }
 }
 
+function button(text, className, onClick) {
+  const btn = document.createElement('button');
+  btn.className = `btn ${className}`;
+  btn.textContent = text;
+  btn.addEventListener('click', onClick);
+  return btn;
+}
+
+function getMobileFromLocation(location) {
+  const value = displayText(location || '').trim();
+  if (!value) return 'Sin movil';
+  return value.split(/\s+-\s+/)[0] || value;
+}
+
+function getPlaceFromLocation(location) {
+  const value = displayText(location || '').trim();
+  const parts = value.split(/\s+-\s+/);
+  return parts.length > 1 ? parts.slice(1).join(' - ') : value;
+}
+
+function getPublicNovelty(task) {
+  const tarea = displayText(task.TAREA || task.OBSERVACIONES || 'Revisar novedad');
+  return tarea
+    .replace(/\bCondicion\b/gi, 'Condici\u00f3n')
+    .replace(/\bMas\b/g, 'M\u00e1s')
+    .replace(/\bmas\b/g, 'm\u00e1s');
+}
+
+function displayText(value) {
+  let text = String(value || '');
+  for (let i = 0; i < 2; i += 1) {
+    try {
+      const decoded = decodeURIComponent(escape(text));
+      if (decoded === text) break;
+      text = decoded;
+    } catch (error) {
+      break;
+    }
+  }
+  return text;
+}
+
 function downloadBoardPdf() {
   if (!allTasks.length) {
     showToast('No hay novedades para descargar.');
@@ -382,38 +417,27 @@ function downloadBoardPdf() {
 
   const { jsPDF } = window.jspdf;
   const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' });
-
   const rows = allTasks.map(task => [
     task.ID || '',
     task.ESTADO || '',
     task.PRIORIDAD || 'Sin prioridad',
-    task.UBICACION || '',
+    getMobileFromLocation(task.UBICACION),
+    getPlaceFromLocation(task.UBICACION),
     task.ELEMENTO || '',
-    task.TAREA || '',
+    getPublicNovelty(task),
     task.CREADO_POR || '',
-    task.ASIGNADO_A || '',
-    task.FECHA_ALTA || ''
+    task.FINALIZADO_POR || '',
+    task.CONTROLADO_POR || ''
   ]);
 
   doc.autoTable({
     startY: 34,
-    head: [['ID', 'Estado', 'Prioridad', 'Ubicacion', 'Elemento', 'Tarea', 'Relevo', 'Asignado', 'Alta']],
+    head: [['ID', 'Estado', 'Prioridad', 'Movil', 'Ubicacion', 'Elemento', 'Novedad', 'Relevo', 'Finalizo', 'Controlo']],
     body: rows,
-    margin: { top: 34, left: 10, right: 10 },
-    styles: { fontSize: 8, cellPadding: 2, overflow: 'linebreak', valign: 'top' },
+    margin: { top: 34, left: 8, right: 8 },
+    styles: { fontSize: 7.5, cellPadding: 2, overflow: 'linebreak', valign: 'top' },
     headStyles: { fillColor: [5, 38, 58], textColor: [255, 255, 255], fontStyle: 'bold' },
     alternateRowStyles: { fillColor: [242, 246, 248] },
-    columnStyles: {
-      0: { cellWidth: 12 },
-      1: { cellWidth: 22 },
-      2: { cellWidth: 24 },
-      3: { cellWidth: 38 },
-      4: { cellWidth: 32 },
-      5: { cellWidth: 70 },
-      6: { cellWidth: 34 },
-      7: { cellWidth: 34 },
-      8: { cellWidth: 22 }
-    },
     didParseCell(data) {
       if (data.section !== 'body') return;
       const prioridad = data.row.raw[2];
@@ -435,14 +459,12 @@ function drawBoardPdfHeader(doc) {
   doc.rect(0, 0, pageWidth, 26, 'F');
   doc.setFillColor(220, 51, 56);
   doc.rect(0, 24, pageWidth, 2, 'F');
-
   try {
     const logo = document.querySelector('.brand-logo');
     if (logo && logo.complete) doc.addImage(logo, 'PNG', pageWidth - 28, 3, 18, 18);
   } catch (error) {
     console.warn('No se pudo agregar el logo al PDF.', error);
   }
-
   doc.setTextColor(255, 255, 255);
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(16);
@@ -463,7 +485,11 @@ function showToast(message) {
 function escapeHtml(value) {
   return String(value ?? '').replace(/[&<>"]/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[ch]));
 }
-function escapeAttr(value) { return escapeHtml(value).replace(/'/g, '&#039;'); }
+
+function escapeAttr(value) {
+  return escapeHtml(value).replace(/'/g, '&#039;');
+}
+
 function toDateInput(value) {
   if (!value) return '';
   const date = new Date(value);

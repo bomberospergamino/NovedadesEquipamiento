@@ -6,6 +6,7 @@ const DEFAULT_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbzYiO560Az_E
 
 let allTasks = [];
 let responsables = [];
+let adminSummary = null;
 let adminMode = false;
 let selectedTask = null;
 
@@ -29,6 +30,10 @@ const els = {
   countDisponible: document.getElementById('countDisponible'),
   countFinalizada: document.getElementById('countFinalizada'),
   countControlada: document.getElementById('countControlada'),
+  historyLink: document.getElementById('historyLink'),
+  yearSummaryText: document.getElementById('yearSummaryText'),
+  topResolverText: document.getElementById('topResolverText'),
+  mobileSummaryBody: document.getElementById('mobileSummaryBody'),
   taskModal: document.getElementById('taskModal'),
   modalMobile: document.getElementById('modalMobile'),
   modalTitle: document.getElementById('modalTitle'),
@@ -108,6 +113,7 @@ function toggleAdmin() {
   localStorage.setItem(ADMIN_KEY, String(adminMode));
   updateAdminVisibility();
   render();
+  if (adminMode) loadAdminSummary();
 }
 
 async function api(action, params = {}) {
@@ -146,7 +152,17 @@ async function loadTasks() {
     const data = await api('list');
     allTasks = data.tasks || [];
     render();
+    if (adminMode) loadAdminSummary();
     showToast('Pizarra actualizada.');
+  } catch (error) {
+    showToast(error.message);
+  }
+}
+
+async function loadAdminSummary() {
+  try {
+    adminSummary = await api('summary', { adminPass: localStorage.getItem('adminPass') || '' });
+    renderAdminSummary();
   } catch (error) {
     showToast(error.message);
   }
@@ -201,6 +217,32 @@ function renderAdmin() {
   renderList(els.listDisponible, disponibles);
   renderList(els.listFinalizada, finalizadas);
   renderList(els.listControlada, controladas);
+  renderAdminSummary();
+}
+
+function renderAdminSummary() {
+  if (!adminSummary) {
+    els.historyLink.removeAttribute('href');
+    els.yearSummaryText.textContent = 'Vamos resolviendo 0 novedades reportadas en el ultimo año.';
+    els.topResolverText.textContent = 'Todavia no hay suficientes novedades finalizadas para destacar a alguien.';
+    els.mobileSummaryBody.innerHTML = '<tr><td colspan="2">Sin datos para mostrar.</td></tr>';
+    return;
+  }
+
+  els.historyLink.href = adminSummary.pizarraUrl || adminSummary.spreadsheetUrl || '#';
+  const total = Number(adminSummary.totalLastYear || 0);
+  els.yearSummaryText.textContent = `Vamos resolviendo ${total} ${total === 1 ? 'novedad reportada' : 'novedades reportadas'} en el ultimo año.`;
+
+  if (adminSummary.topResolver && adminSummary.topResolver.name) {
+    els.topResolverText.textContent = `Podemos felicitar a ${displayText(adminSummary.topResolver.name)} por ser la persona que mas novedades resolvio!`;
+  } else {
+    els.topResolverText.textContent = 'Todavia no hay suficientes novedades finalizadas para destacar a alguien.';
+  }
+
+  const rows = adminSummary.byMobile || [];
+  els.mobileSummaryBody.innerHTML = rows.length
+    ? rows.map(row => `<tr><td>${escapeHtml(displayText(row.mobile || 'Sin movil'))}</td><td>${escapeHtml(row.count)}</td></tr>`).join('')
+    : '<tr><td colspan="2">Sin datos para mostrar.</td></tr>';
 }
 
 function renderList(container, tasks) {

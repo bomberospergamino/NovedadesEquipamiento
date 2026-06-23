@@ -44,6 +44,7 @@ function doGet(e) {
     if (action === 'activity') return jsonResponse({ items: getActivityItems_(params.name) });
 
     if (action === 'list') return jsonResponse(listTasks_());
+    if (action === 'summary') return jsonResponse(summaryTasks_(params));
     if (action === 'assign') return jsonResponse(assignTask_(params));
     if (action === 'finish') return jsonResponse(finishTask_(params));
     if (action === 'control') return jsonResponse(controlTask_(params));
@@ -381,6 +382,52 @@ function listTasks_() {
   return { ok: true, tasks: visible, legacyAssigned };
 }
 
+function summaryTasks_(params) {
+  if (String(params.adminPass || '') !== ADMIN_PASS) throw new Error('Clave de administrador incorrecta.');
+  const { sh, items } = getPizarraData_();
+  const today = now_();
+  const from = new Date(today);
+  from.setDate(from.getDate() - 365);
+  from.setHours(0, 0, 0, 0);
+
+  const byMobile = {};
+  const byResolver = {};
+  let totalLastYear = 0;
+
+  items.forEach(item => {
+    const alta = parseDate_(item.FECHA_ALTA);
+    if (alta && alta >= from) {
+      totalLastYear++;
+      const mobile = getMobileFromPizarraLocation_(item.UBICACION);
+      byMobile[mobile] = (byMobile[mobile] || 0) + 1;
+    }
+
+    const finalizacion = parseDate_(item.FECHA_FINALIZACION);
+    const resolver = String(item.FINALIZADO_POR || item.ASIGNADO_A || '').trim();
+    if (resolver && finalizacion && finalizacion >= from) {
+      byResolver[resolver] = (byResolver[resolver] || 0) + 1;
+    }
+  });
+
+  const mobileRows = Object.keys(byMobile)
+    .map(mobile => ({ mobile, count: byMobile[mobile] }))
+    .sort((a, b) => b.count - a.count || a.mobile.localeCompare(b.mobile));
+  const topResolver = Object.keys(byResolver)
+    .map(name => ({ name, count: byResolver[name] }))
+    .sort((a, b) => b.count - a.count || a.name.localeCompare(b.name))[0] || null;
+  const spreadsheetUrl = 'https://docs.google.com/spreadsheets/d/' + SPREADSHEET_ID + '/edit';
+  const pizarraUrl = spreadsheetUrl + '#gid=' + sh.getSheetId();
+
+  return {
+    ok: true,
+    totalLastYear,
+    byMobile: mobileRows,
+    topResolver,
+    spreadsheetUrl,
+    pizarraUrl
+  };
+}
+
 function normalizeForClient_(item) {
   const copy = {};
   Object.keys(item).forEach(k => {
@@ -620,6 +667,12 @@ function nextId_(items) {
     return Number.isFinite(n) ? Math.max(max, n) : max;
   }, 0);
   return maxId + 1;
+}
+
+function getMobileFromPizarraLocation_(location) {
+  const value = String(location || '').trim();
+  if (!value) return 'Sin movil';
+  return value.split(/\s+-\s+/)[0] || value;
 }
 
 function normalizeDateKey_(value) {

@@ -120,7 +120,7 @@ h1 { margin: 0; font-size: clamp(28px, 4vw, 44px); }
 
 .toolbar {
   display: grid;
-  grid-template-columns: minmax(220px, 2fr) minmax(140px, .7fr) minmax(140px, .7fr);
+  grid-template-columns: minmax(260px, 2fr) minmax(160px, .7fr);
   gap: 14px;
   padding: 16px;
   margin-bottom: 18px;

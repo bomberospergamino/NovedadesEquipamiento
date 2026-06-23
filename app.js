@@ -22,7 +22,6 @@ const els = {
   adminPanel: document.getElementById('adminPanel'),
   filterText: document.getElementById('filterText'),
   filterStatus: document.getElementById('filterStatus'),
-  filterPriority: document.getElementById('filterPriority'),
   listPublic: document.getElementById('listPublic'),
   listDisponible: document.getElementById('listDisponible'),
   listFinalizada: document.getElementById('listFinalizada'),
@@ -59,7 +58,6 @@ function init() {
   els.btnAdmin.addEventListener('click', toggleAdmin);
   els.filterText.addEventListener('input', render);
   els.filterStatus.addEventListener('change', render);
-  els.filterPriority.addEventListener('change', render);
   els.modalClose.addEventListener('click', closeTaskModal);
   els.modalCancel.addEventListener('click', closeTaskModal);
   els.modalFinish.addEventListener('click', finishSelectedTask);
@@ -189,7 +187,6 @@ function renderPublic() {
 function renderAdmin() {
   const text = els.filterText.value.trim().toLowerCase();
   const status = els.filterStatus.value;
-  const priority = els.filterPriority.value;
   const filtered = allTasks.filter(task => {
     const blob = [
       task.ID,
@@ -197,13 +194,12 @@ function renderAdmin() {
       task.ELEMENTO,
       task.TAREA,
       task.CREADO_POR,
-      task.FINALIZADO_POR,
+      task.REALIZADO_POR,
       task.CONTROLADO_POR,
       task.OBSERVACIONES
     ].join(' ').toLowerCase();
     return (!text || blob.includes(text))
-      && (!status || task.ESTADO === status)
-      && (!priority || task.PRIORIDAD === priority);
+      && (!status || task.ESTADO === status);
   });
 
   const disponibles = filtered.filter(task => task.ESTADO === 'Disponible');
@@ -256,8 +252,7 @@ function renderList(container, tasks) {
 
 function createPublicCard(task) {
   const card = document.createElement('article');
-  const prioridad = (task.PRIORIDAD || 'sin-prioridad').toLowerCase();
-  card.className = `public-card priority-card-${prioridad}`;
+  card.className = 'public-card';
   card.tabIndex = 0;
   card.innerHTML = `
     <div class="public-mobile">${escapeHtml(getMobileFromLocation(task.UBICACION))}</div>
@@ -276,13 +271,10 @@ function createPublicCard(task) {
 
 function createAdminCard(task) {
   const card = document.createElement('article');
-  const prioridad = (task.PRIORIDAD || 'sin-prioridad').toLowerCase();
-  const prioridadLabel = task.PRIORIDAD || 'Sin prioridad';
-  card.className = `task-card priority-card-${prioridad}`;
+  card.className = 'task-card';
   card.innerHTML = `
     <div class="task-top">
       <div><strong>#${escapeHtml(task.ID)}</strong></div>
-      <span class="priority ${prioridad}">${escapeHtml(prioridadLabel)}</span>
     </div>
     <div class="task-title">${escapeHtml(getPublicNovelty(task))}</div>
     <div class="meta">
@@ -292,10 +284,10 @@ function createAdminCard(task) {
       <span><strong>Estado:</strong> ${escapeHtml(task.ESTADO || '-')}</span>
       <span><strong>Alta:</strong> ${escapeHtml(task.FECHA_ALTA || '-')}</span>
       ${task.CREADO_POR ? `<span><strong>Relevo:</strong> ${escapeHtml(displayText(task.CREADO_POR))}</span>` : ''}
-      ${task.FINALIZADO_POR ? `<span><strong>Finalizo:</strong> ${escapeHtml(displayText(task.FINALIZADO_POR))}</span>` : ''}
-      ${task.FECHA_FINALIZACION ? `<span><strong>Fecha finalizacion:</strong> ${escapeHtml(task.FECHA_FINALIZACION)}</span>` : ''}
+      ${task.REALIZADO_POR ? `<span><strong>Realizado por:</strong> ${escapeHtml(displayText(task.REALIZADO_POR))}</span>` : ''}
+      ${task.FECHA_REALIZADO ? `<span><strong>Fecha realizado:</strong> ${escapeHtml(task.FECHA_REALIZADO)}</span>` : ''}
       ${task.CONTROLADO_POR ? `<span><strong>Controlo:</strong> ${escapeHtml(displayText(task.CONTROLADO_POR))}</span>` : ''}
-      ${task.FECHA_CONTROL ? `<span><strong>Fecha control:</strong> ${escapeHtml(task.FECHA_CONTROL)}</span>` : ''}
+      ${task.FECHA_CONTROLADO ? `<span><strong>Fecha controlado:</strong> ${escapeHtml(task.FECHA_CONTROLADO)}</span>` : ''}
       ${task.OBSERVACIONES ? `<span><strong>Obs:</strong> ${escapeHtml(displayText(task.OBSERVACIONES))}</span>` : ''}
     </div>
     <div class="actions"></div>
@@ -375,15 +367,9 @@ function toggleAdminEdit(card, task) {
   const box = document.createElement('div');
   box.className = 'admin-edit';
   box.innerHTML = `
-    <div class="admin-grid">
-      <div class="field"><label>Prioridad</label><select class="adm-priority"><option value="">Sin prioridad</option><option>Baja</option><option>Media</option><option>Alta</option></select></div>
-      <div class="field"><label>Tiempo estimado dias</label><input class="adm-days" type="number" min="0" step="1" value="${escapeAttr(task.TIEMPO_ESTIMADO_DIAS || '')}"></div>
-    </div>
-    <div class="field"><label>Fecha vencimiento</label><input class="adm-due" type="date" value="${toDateInput(task.FECHA_VENCIMIENTO)}"></div>
     <div class="field"><label>Observaciones</label><textarea class="adm-obs">${escapeHtml(task.OBSERVACIONES || '')}</textarea></div>
     <button class="btn primary small adm-save">Guardar cambios</button>
   `;
-  box.querySelector('.adm-priority').value = task.PRIORIDAD || '';
   box.querySelector('.adm-save').addEventListener('click', () => saveAdminEdit(task.ID, box));
   card.appendChild(box);
 }
@@ -392,9 +378,6 @@ async function saveAdminEdit(id, box) {
   try {
     await api('adminUpdate', {
       id,
-      prioridad: box.querySelector('.adm-priority').value,
-      tiempoEstimadoDias: box.querySelector('.adm-days').value,
-      fechaVencimiento: box.querySelector('.adm-due').value,
       observaciones: box.querySelector('.adm-obs').value,
       adminPass: localStorage.getItem('adminPass') || ''
     });
@@ -462,31 +445,23 @@ function downloadBoardPdf() {
   const rows = allTasks.map(task => [
     task.ID || '',
     task.ESTADO || '',
-    task.PRIORIDAD || 'Sin prioridad',
     getMobileFromLocation(task.UBICACION),
     getPlaceFromLocation(task.UBICACION),
     task.ELEMENTO || '',
     getPublicNovelty(task),
     task.CREADO_POR || '',
-    task.FINALIZADO_POR || '',
+    task.REALIZADO_POR || '',
     task.CONTROLADO_POR || ''
   ]);
 
   doc.autoTable({
     startY: 34,
-    head: [['ID', 'Estado', 'Prioridad', 'Movil', 'Ubicacion', 'Elemento', 'Novedad', 'Relevo', 'Finalizo', 'Controlo']],
+    head: [['ID', 'Estado', 'Movil', 'Ubicacion', 'Elemento', 'Novedad', 'Relevo', 'Realizado por', 'Controlo']],
     body: rows,
     margin: { top: 34, left: 8, right: 8 },
     styles: { fontSize: 7.5, cellPadding: 2, overflow: 'linebreak', valign: 'top' },
     headStyles: { fillColor: [5, 38, 58], textColor: [255, 255, 255], fontStyle: 'bold' },
     alternateRowStyles: { fillColor: [242, 246, 248] },
-    didParseCell(data) {
-      if (data.section !== 'body') return;
-      const prioridad = data.row.raw[2];
-      if (prioridad === 'Alta') data.cell.styles.fillColor = [255, 241, 241];
-      if (prioridad === 'Media') data.cell.styles.fillColor = [255, 253, 227];
-      if (prioridad === 'Baja') data.cell.styles.fillColor = [237, 248, 253];
-    },
     willDrawPage() {
       drawBoardPdfHeader(doc);
     }

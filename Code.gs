@@ -17,20 +17,14 @@ const PIZARRA_HEADERS = [
   'UBICACION',
   'ELEMENTO',
   'TAREA',
-  'PRIORIDAD',
-  'TIEMPO_ESTIMADO_DIAS',
-  'FECHA_VENCIMIENTO',
   'ESTADO',
-  'ASIGNADO_A',
-  'FECHA_ASIGNACION',
-  'FECHA_FINALIZACION',
+  'REALIZADO_POR',
+  'FECHA_REALIZADO',
+  'FECHA_CONTROLADO',
   'OBSERVACIONES',
   'FOTOS',
   'CREADO_POR',
   'ULTIMA_ACTUALIZACION',
-  'ULTIMO_ASIGNADO',
-  'FINALIZADO_POR',
-  'FECHA_CONTROL',
   'CONTROLADO_POR'
 ];
 
@@ -245,7 +239,6 @@ function appendNovedades_(payload, now, pdfUrl) {
       ubicacion: buildPizarraLocation_(payload.activity, n.ubicacion),
       elemento: n.elemento || '',
       tarea: buildTaskText_(n),
-      prioridad: '',
       observaciones: joinNotes_(payload.observaciones, n.observacionFila),
       fotos: pdfUrl,
       creadoPor: payload.responsable || ''
@@ -341,16 +334,73 @@ function getPizarraSheet_() {
     sh.appendRow(PIZARRA_HEADERS);
   }
   if (sh.getLastRow() === 0) sh.appendRow(PIZARRA_HEADERS);
-  ensurePizarraHeaders_(sh);
+  migratePizarraHeaders_(sh);
   return sh;
 }
 
+function migratePizarraHeaders_(sh) {
+  ensurePizarraHeaders_(sh);
+  copyLegacyPizarraColumn_(sh, 'FINALIZADO_POR', 'REALIZADO_POR');
+  copyLegacyPizarraColumn_(sh, 'ASIGNADO_A', 'REALIZADO_POR', true);
+  copyLegacyPizarraColumn_(sh, 'FECHA_FINALIZACION', 'FECHA_REALIZADO');
+  copyLegacyPizarraColumn_(sh, 'FECHA_ASIGNACION', 'FECHA_REALIZADO', true);
+  copyLegacyPizarraColumn_(sh, 'FECHA_CONTROL', 'FECHA_CONTROLADO');
+  deletePizarraColumns_(sh, [
+    'PRIORIDAD',
+    'TIEMPO_ESTIMADO_DIAS',
+    'FECHA_VENCIMIENTO',
+    'ASIGNADO_A',
+    'FECHA_ASIGNACION',
+    'FECHA_FINALIZACION',
+    'ULTIMO_ASIGNADO',
+    'FINALIZADO_POR',
+    'FECHA_CONTROL'
+  ]);
+  ensurePizarraHeaders_(sh);
+}
+
 function ensurePizarraHeaders_(sh) {
-  const lastCol = Math.max(sh.getLastColumn(), 1);
-  const headers = sh.getRange(1, 1, 1, lastCol).getValues()[0].map(String);
+  const headers = getSheetHeaders_(sh);
   const missing = PIZARRA_HEADERS.filter(header => !headers.includes(header));
   if (!missing.length) return;
   sh.getRange(1, headers.length + 1, 1, missing.length).setValues([missing]);
+}
+
+function copyLegacyPizarraColumn_(sh, oldName, newName, skipAssigned) {
+  let headers = getSheetHeaders_(sh);
+  const oldIdx = headers.indexOf(oldName);
+  if (oldIdx < 0) return;
+  if (!headers.includes(newName)) {
+    sh.getRange(1, headers.length + 1).setValue(newName);
+    headers = getSheetHeaders_(sh);
+  }
+  const newIdx = headers.indexOf(newName);
+  const estadoIdx = headers.indexOf('ESTADO');
+  const lastRow = sh.getLastRow();
+  if (lastRow < 2) return;
+  const values = sh.getRange(2, 1, lastRow - 1, headers.length).getValues();
+  const updates = values.map(row => {
+    const current = row[newIdx];
+    const legacy = row[oldIdx];
+    const estado = estadoIdx >= 0 ? String(row[estadoIdx] || '').trim() : '';
+    if (skipAssigned && estado === 'Asignada') return [current];
+    return current ? [current] : [legacy];
+  });
+  sh.getRange(2, newIdx + 1, updates.length, 1).setValues(updates);
+}
+
+function deletePizarraColumns_(sh, names) {
+  const headers = getSheetHeaders_(sh);
+  const indexes = names
+    .map(name => headers.indexOf(name))
+    .filter(idx => idx >= 0)
+    .sort((a, b) => b - a);
+  indexes.forEach(idx => sh.deleteColumn(idx + 1));
+}
+
+function getSheetHeaders_(sh) {
+  const lastCol = Math.max(sh.getLastColumn(), 1);
+  return sh.getRange(1, 1, 1, lastCol).getValues()[0].map(String);
 }
 
 function getPizarraData_() {
@@ -374,7 +424,7 @@ function listTasks_() {
   const visible = items.filter(item => {
     const estado = String(item.ESTADO || '').trim();
     if (estado === 'Controlada') {
-      return daysSince_(item.FECHA_CONTROL) <= CONTROLADAS_VISIBLES_DIAS;
+      return daysSince_(item.FECHA_CONTROLADO) <= CONTROLADAS_VISIBLES_DIAS;
     }
     return true;
   }).map(item => normalizeForClient_(item));
@@ -402,8 +452,8 @@ function summaryTasks_(params) {
       byMobile[mobile] = (byMobile[mobile] || 0) + 1;
     }
 
-    const finalizacion = parseDate_(item.FECHA_FINALIZACION);
-    const resolver = String(item.FINALIZADO_POR || item.ASIGNADO_A || '').trim();
+    const finalizacion = parseDate_(item.FECHA_REALIZADO);
+    const resolver = String(item.REALIZADO_POR || '').trim();
     if (resolver && finalizacion && finalizacion >= from) {
       byResolver[resolver] = (byResolver[resolver] || 0) + 1;
     }
@@ -449,22 +499,15 @@ function shouldReleaseAssigned_(item) {
 function normalizeLegacyAssigned_() {
   const { sh, headers, items } = getPizarraData_();
   const cEstado = colIndex_(headers, 'ESTADO');
-  const cAsignado = colIndex_(headers, 'ASIGNADO_A');
-  const cUltimo = colIndex_(headers, 'ULTIMO_ASIGNADO');
   const cObs = colIndex_(headers, 'OBSERVACIONES');
   const cUpd = colIndex_(headers, 'ULTIMA_ACTUALIZACION');
-  const cFechaAsignacion = colIndex_(headers, 'FECHA_ASIGNACION');
 
   let count = 0;
   items.forEach(item => {
     if (shouldReleaseAssigned_(item)) {
-      const anterior = item.ASIGNADO_A || '';
       const obsActual = item.OBSERVACIONES || '';
       const obsNueva = String(obsActual) + (obsActual ? '\n' : '') + 'Asignacion anterior removida por cambio de flujo el ' + formatDate_(now_()) + '.';
       sh.getRange(item._row, cEstado).setValue('Disponible');
-      sh.getRange(item._row, cUltimo).setValue(anterior);
-      sh.getRange(item._row, cAsignado).setValue('');
-      sh.getRange(item._row, cFechaAsignacion).setValue('');
       sh.getRange(item._row, cObs).setValue(obsNueva);
       sh.getRange(item._row, cUpd).setValue(formatDate_(now_()));
       count++;
@@ -496,9 +539,8 @@ function finishTask_(params) {
   const obsNueva = obsCierre ? String(obsActual) + (obsActual ? '\n' : '') + 'Cierre (' + user + '): ' + obsCierre : obsActual;
 
   sh.getRange(item._row, colIndex_(headers, 'ESTADO')).setValue('Finalizada');
-  sh.getRange(item._row, colIndex_(headers, 'ASIGNADO_A')).setValue(user);
-  sh.getRange(item._row, colIndex_(headers, 'FINALIZADO_POR')).setValue(user);
-  sh.getRange(item._row, colIndex_(headers, 'FECHA_FINALIZACION')).setValue(formatDate_(now_()));
+  sh.getRange(item._row, colIndex_(headers, 'REALIZADO_POR')).setValue(user);
+  sh.getRange(item._row, colIndex_(headers, 'FECHA_REALIZADO')).setValue(formatDate_(now_()));
   sh.getRange(item._row, colIndex_(headers, 'OBSERVACIONES')).setValue(obsNueva);
   sh.getRange(item._row, colIndex_(headers, 'ULTIMA_ACTUALIZACION')).setValue(formatDate_(now_()));
   return { ok: true, message: 'Tarea finalizada.' };
@@ -513,7 +555,7 @@ function controlTask_(params) {
     throw new Error('Solo se pueden controlar novedades finalizadas.');
   }
   sh.getRange(item._row, colIndex_(headers, 'ESTADO')).setValue('Controlada');
-  sh.getRange(item._row, colIndex_(headers, 'FECHA_CONTROL')).setValue(formatDate_(now_()));
+  sh.getRange(item._row, colIndex_(headers, 'FECHA_CONTROLADO')).setValue(formatDate_(now_()));
   sh.getRange(item._row, colIndex_(headers, 'CONTROLADO_POR')).setValue(user);
   sh.getRange(item._row, colIndex_(headers, 'ULTIMA_ACTUALIZACION')).setValue(formatDate_(now_()));
   return { ok: true, message: 'Novedad controlada.' };
@@ -523,9 +565,6 @@ function adminUpdate_(params) {
   if (String(params.adminPass || '') !== ADMIN_PASS) throw new Error('Clave de administrador incorrecta.');
   const { sh, headers, item } = findPizarraById_(params.id);
 
-  if (params.prioridad !== undefined) sh.getRange(item._row, colIndex_(headers, 'PRIORIDAD')).setValue(params.prioridad);
-  if (params.tiempoEstimadoDias !== undefined) sh.getRange(item._row, colIndex_(headers, 'TIEMPO_ESTIMADO_DIAS')).setValue(params.tiempoEstimadoDias);
-  if (params.fechaVencimiento) sh.getRange(item._row, colIndex_(headers, 'FECHA_VENCIMIENTO')).setValue(params.fechaVencimiento);
   if (params.observaciones !== undefined) sh.getRange(item._row, colIndex_(headers, 'OBSERVACIONES')).setValue(params.observaciones);
   sh.getRange(item._row, colIndex_(headers, 'ULTIMA_ACTUALIZACION')).setValue(formatDate_(now_()));
 
@@ -538,9 +577,6 @@ function createTaskFromNovedad_(params) {
     ubicacion: params.ubicacion || '',
     elemento: params.elemento || '',
     tarea: params.tarea || params.novedad || '',
-    prioridad: params.prioridad || '',
-    tiempoEstimadoDias: params.tiempoEstimadoDias || '',
-    fechaVencimiento: params.fechaVencimiento || '',
     observaciones: params.observaciones || '',
     fotos: params.fotos || '',
     creadoPor: params.creadoPor || params.usuario || ''
@@ -553,13 +589,6 @@ function createPizarraTask_(data) {
   const id = nextId_(items);
   const row = headers.map(h => '');
   const fechaAlta = formatDate_(now_());
-  const dias = data.tiempoEstimadoDias || '';
-  let vencimiento = data.fechaVencimiento || '';
-  if (!vencimiento && dias !== '') {
-    const d = now_();
-    d.setDate(d.getDate() + Number(dias));
-    vencimiento = onlyDate_(d);
-  }
 
   setRowValue_(row, headers, 'ID', id);
   setRowValue_(row, headers, 'FECHA_ALTA', fechaAlta);
@@ -567,9 +596,6 @@ function createPizarraTask_(data) {
   setRowValue_(row, headers, 'UBICACION', data.ubicacion || '');
   setRowValue_(row, headers, 'ELEMENTO', data.elemento || '');
   setRowValue_(row, headers, 'TAREA', data.tarea || '');
-  setRowValue_(row, headers, 'PRIORIDAD', data.prioridad || '');
-  setRowValue_(row, headers, 'TIEMPO_ESTIMADO_DIAS', dias);
-  setRowValue_(row, headers, 'FECHA_VENCIMIENTO', vencimiento);
   setRowValue_(row, headers, 'ESTADO', 'Disponible');
   setRowValue_(row, headers, 'OBSERVACIONES', data.observaciones || '');
   setRowValue_(row, headers, 'FOTOS', data.fotos || '');
@@ -743,8 +769,6 @@ function pruebaCrearTarea() {
     ubicacion: 'Movil 1',
     elemento: 'Linterna',
     tarea: 'Revisar bateria / carga.',
-    prioridad: '',
-    tiempoEstimadoDias: '7',
     usuario: 'Prueba'
   });
   Logger.log(res);
